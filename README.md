@@ -155,6 +155,8 @@ Contributions to **NeuroGrip App** are tracked across development, firmware, and
 | <img src="https://github.com/nandu123-1.png" width="48" style="border-radius:50%"/> | **Nandu** | [@nandu123-1](https://github.com/nandu123-1) | Project Lead, Mobile Architecture, On-Device AI Engine & CAD Enclosure |
 | <img src="https://github.com/vikasgupta20.png" width="48" style="border-radius:50%"/> | **Vikas Gupta** | [@vikasgupta20](https://github.com/vikasgupta20) | Core Contributor, Peripheral Integration & App Development |
 | <img src="https://github.com/spurthireddy280.png" width="48" style="border-radius:50%"/> | **Spurthi Reddy** | [@spurthireddy280](https://github.com/spurthireddy280) | Core Contributor, Clinical Analytics & Biofeedback Diagnostics |
+| <img src="https://github.com/meela-amrutha.png" width="48" style="border-radius:50%"/> | **Meela Amrutha** | [@meela-amrutha](https://github.com/meela-amrutha) | Core Contributor, Frontend & UI/UX Development |
+| <img src="https://github.com/siddarthaanishetty19-pixel.png" width="48" style="border-radius:50%"/> | **Siddartha Anishetty** | [@siddarthaanishetty19-pixel](https://github.com/siddarthaanishetty19-pixel) | Core Contributor, Hardware Telemetry & Testing |
 
 Track detailed individual commit metrics, lines of code, and frequency graphs on the official [GitHub Contributors Insight](https://github.com/nandu123-1/NeuroGrip-App/graphs/contributors).
 
