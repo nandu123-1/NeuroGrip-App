@@ -122,11 +122,25 @@ void drawDashedLine(int x0, int y0, int x1, int y1, uint16_t color, int dash = 5
 
 // Pen Notification Callbacks
 static void gripNotifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
-  if (length == 4) {
+  if (length == 0) return;
+  if (length == 4 && (pData[0] != 'P')) {
     uint32_t val = (uint32_t)pData[0] | ((uint32_t)pData[1] << 8) | ((uint32_t)pData[2] << 16) | ((uint32_t)pData[3] << 24);
     penPressure = (int)val;
-  } else if (length > 0) {
-    penPressure = atoi((char*)pData);
+    return;
+  }
+  char buf[64];
+  size_t n = (length < 63) ? length : 63;
+  memcpy(buf, pData, n);
+  buf[n] = '\0';
+  char* pStr = strstr(buf, "P:");
+  if (pStr) {
+    penPressure = atoi(pStr + 2);
+  } else {
+    penPressure = atoi(buf);
+  }
+  char* tStr = strstr(buf, "T:");
+  if (tStr) {
+    penTremor = atoi(tStr + 2);
   }
 }
 
@@ -688,6 +702,7 @@ void loop() {
   static bool wasDownLastFrame = false;
   static int lastSentX = -1;
   static int lastSentY = -1;
+  static int lastSentP = -1;
   static unsigned long lastStreamTime = 0;
   unsigned long now = millis();
 
@@ -695,16 +710,17 @@ void loop() {
 
   if (phoneConnected && pDataCharacteristic) {
     if (isDown) {
-      // Active inking: send immediately on 2px move or at least every 20ms
-      if (abs(touchX - lastSentX) >= 2 || abs(touchY - lastSentY) >= 2 || (now - lastStreamTime >= 20)) {
+      // Active inking: send immediately on 2px move or at least every 25ms (40 Hz)
+      if (abs(touchX - lastSentX) >= 2 || abs(touchY - lastSentY) >= 2 || (now - lastStreamTime >= 25)) {
         shouldSend = true;
       }
     } else if (wasDownLastFrame) {
       // Just lifted: send touch-up signal immediately once!
       shouldSend = true;
     } else {
-      // Idle / Hover: heartbeat stream only once every 200ms (5 Hz)
-      if (now - lastStreamTime >= 200) {
+      // Hover / Normal paper grip: stream immediately if force changes by >= 15 ADC counts
+      // or at steady 30 Hz (every 33ms) so mobile grip curve is buttery-smooth!
+      if (abs(penPressure - lastSentP) >= 15 || (now - lastStreamTime >= 33)) {
         shouldSend = true;
       }
     }
@@ -713,6 +729,7 @@ void loop() {
       lastStreamTime = now;
       lastSentX = isDown ? touchX : 0;
       lastSentY = isDown ? touchY : 0;
+      lastSentP = penPressure;
       wasDownLastFrame = isDown;
 
       char packet[48];
@@ -729,5 +746,5 @@ void loop() {
     wasDownLastFrame = isDown;
   }
 
-  delay(10); // ~100 Hz smooth touch polling rate
+  delay(5); // ~200 Hz ultra-fast touch and telemetry polling rate
 }
