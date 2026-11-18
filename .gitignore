@@ -50,3 +50,10 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+.pio/
+*.o
+*.d
+*.bin
+*.a
+
