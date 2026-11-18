@@ -146,6 +146,20 @@ graph TD
 
 ---
 
+## 👥 Contributors & Team
+
+Contributions to **NeuroGrip App** are tracked across development, firmware, and clinical diagnostics:
+
+| Avatar | Contributor | GitHub Profile | Role / Area |
+| :---: | :--- | :--- | :--- |
+| <img src="https://github.com/nandu123-1.png" width="48" style="border-radius:50%"/> | **Nandu** | [@nandu123-1](https://github.com/nandu123-1) | Project Lead, Mobile Architecture, On-Device AI Engine & CAD Enclosure |
+| <img src="https://github.com/vikasgupta20.png" width="48" style="border-radius:50%"/> | **Vikas Gupta** | [@vikasgupta20](https://github.com/vikasgupta20) | Core Contributor, Peripheral Integration & App Development |
+| <img src="https://github.com/spurthireddy280.png" width="48" style="border-radius:50%"/> | **Spurthi Reddy** | [@spurthireddy280](https://github.com/spurthireddy280) | Core Contributor, Clinical Analytics & Biofeedback Diagnostics |
+
+Track detailed individual commit metrics, lines of code, and frequency graphs on the official [GitHub Contributors Insight](https://github.com/nandu123-1/NeuroGrip-App/graphs/contributors).
+
+---
+
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
