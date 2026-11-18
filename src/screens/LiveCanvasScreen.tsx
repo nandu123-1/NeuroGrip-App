@@ -19,8 +19,17 @@ import Svg, {
 } from 'react-native-svg';
 import { useBleStore } from '../store/useBleStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useAiStore } from '../store/useAiStore';
 import { Colors } from '../theme/colors';
-import { TrashIcon, RefreshIcon, CanvasIcon, SparklesIcon } from '../components/Icons';
+import {
+  TrashIcon,
+  RefreshIcon,
+  CanvasIcon,
+  SparklesIcon,
+  AlertTriangleIcon,
+  ShieldCheckIcon,
+  TargetIcon,
+} from '../components/Icons';
 import { SpringButton } from '../components/SpringButton';
 import { PulseDot } from '../components/PulseDot';
 
@@ -47,7 +56,28 @@ export default function LiveCanvasScreen() {
     setTestMode,
     setAlphabetSet,
     toggleSimulation,
+    triggerBuzzerHaptic,
   } = useBleStore();
+
+  const {
+    activeProfile,
+    activeViolation,
+    checkLiveTelemetry,
+    evaluateSessionPoints,
+  } = useAiStore();
+
+  const isOnline = status === 'Connected' || isSimulated;
+  const pinchGrams = pressureGrams || Math.round((pressure / 1023) * 600);
+  const currentHz = tremorHz || (isOnline ? 3.8 : 0);
+
+  // Real-time AI Threshold monitoring & Pen Haptic Trigger
+  useEffect(() => {
+    if (isOnline && (pinchGrams > 0 || currentHz > 0)) {
+      checkLiveTelemetry(pinchGrams, currentHz, () => {
+        triggerBuzzerHaptic().catch(() => {});
+      });
+    }
+  }, [pinchGrams, currentHz, isOnline, checkLiveTelemetry, triggerBuzzerHaptic]);
 
   // Animated cursor pulsation
   const touchAnim = useRef(new Animated.Value(1)).current;
@@ -65,10 +95,10 @@ export default function LiveCanvasScreen() {
   const scaleX = (x: number) => (x / 480.0) * CANVAS_WIDTH;
   const scaleY = (y: number) => (y / 320.0) * CANVAS_HEIGHT;
 
-  // Pressure color gradient logic
+  // Personalized Pressure color gradient logic
   const getPressureColor = () => {
-    if (pressure > 700) return Colors.danger;
-    if (pressure > 480) return Colors.warning;
+    if (pinchGrams > activeProfile.maxSafePinchGrams) return Colors.danger;
+    if (pinchGrams < activeProfile.minSafePinchGrams && pinchGrams >= 25) return Colors.warning;
     return Colors.success;
   };
 
@@ -223,10 +253,6 @@ export default function LiveCanvasScreen() {
     );
   };
 
-  const isOnline = status === 'Connected' || isSimulated;
-  const pinchGrams = pressureGrams || Math.round((pressure / 1023) * 600);
-  const currentHz = tremorHz || (isOnline ? 3.8 : 0);
-
   return (
     <ScrollView style={[styles.scrollContainer, { backgroundColor: colors.bg }]} contentContainerStyle={styles.container}>
       {/* Top Glassmorphic Navigation Bar */}
@@ -235,10 +261,10 @@ export default function LiveCanvasScreen() {
           <View style={styles.brandRow}>
             <Text style={[styles.brandTitle, { color: colors.textPrimary }]}>NEUROGRIP</Text>
             <View style={[styles.proBadge, { backgroundColor: colors.isDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(2, 132, 199, 0.1)', borderColor: colors.border }]}>
-              <Text style={[styles.proBadgeText, { color: colors.primary }]}>PRO CAD</Text>
+              <Text style={[styles.proBadgeText, { color: colors.primary }]}>AI ENVELOPE</Text>
             </View>
           </View>
-          <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>Waveshare 3.5" (F) High-Res Inking Mirror</Text>
+          <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>Adaptive Neuromuscular Biofeedback Mirror</Text>
         </View>
 
         {/* Live Status Pill */}
@@ -254,7 +280,65 @@ export default function LiveCanvasScreen() {
         </View>
       </View>
 
-      {/* Biometric Telemetry Matrix Card */}
+      {/* Real-time AI Personalized Threshold Alert Banner */}
+      {activeViolation && (
+        <View
+          style={[
+            styles.aiAlertBanner,
+            {
+              backgroundColor:
+                activeViolation.type === 'HIGH_PINCH'
+                  ? 'rgba(239, 68, 68, 0.12)'
+                  : activeViolation.type === 'EXCESSIVE_TREMOR'
+                  ? 'rgba(244, 63, 94, 0.12)'
+                  : 'rgba(245, 158, 11, 0.12)',
+              borderColor:
+                activeViolation.type === 'HIGH_PINCH'
+                  ? Colors.danger
+                  : activeViolation.type === 'EXCESSIVE_TREMOR'
+                  ? '#F43F5E'
+                  : Colors.warning,
+            },
+          ]}
+        >
+          <AlertTriangleIcon
+            size={18}
+            color={
+              activeViolation.type === 'HIGH_PINCH'
+                ? Colors.danger
+                : activeViolation.type === 'EXCESSIVE_TREMOR'
+                ? '#F43F5E'
+                : Colors.warning
+            }
+          />
+          <View style={styles.aiAlertTextCol}>
+            <Text
+              style={[
+                styles.aiAlertTitle,
+                {
+                  color:
+                    activeViolation.type === 'HIGH_PINCH'
+                      ? Colors.danger
+                      : activeViolation.type === 'EXCESSIVE_TREMOR'
+                      ? '#F43F5E'
+                      : Colors.warning,
+                },
+              ]}
+            >
+              {activeViolation.type === 'HIGH_PINCH'
+                ? 'PERSONAL PINCH CEILING EXCEEDED'
+                : activeViolation.type === 'EXCESSIVE_TREMOR'
+                ? 'KINETIC TREMOR SURGE DETECTED'
+                : 'GRIP INSTABILITY ALERT'}
+            </Text>
+            <Text style={[styles.aiAlertSubtitle, { color: colors.textSecondary }]}>
+              {activeViolation.message}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* Biometric Telemetry Matrix Card with Personalized Bounds */}
       <View style={[styles.telemetryCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         {/* Pinch Pressure Gauge */}
         <View style={styles.telemetryCol}>
@@ -276,6 +360,9 @@ export default function LiveCanvasScreen() {
               ]}
             />
           </View>
+          <Text style={[styles.envelopeSubtext, { color: colors.textMuted }]}>
+            Safe: {activeProfile.minSafePinchGrams}-{activeProfile.maxSafePinchGrams}g
+          </Text>
         </View>
 
         <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
@@ -284,13 +371,13 @@ export default function LiveCanvasScreen() {
         <View style={styles.telemetryCol}>
           <Text style={[styles.telemetryLabel, { color: colors.textMuted }]}>TREMOR SPECTRUM</Text>
           <View style={styles.valueRow}>
-            <Text style={[styles.telemetryValue, { color: currentHz > 5.5 ? colors.danger : colors.primary }]}>
+            <Text style={[styles.telemetryValue, { color: currentHz > activeProfile.maxTremorCeilingHz ? colors.danger : colors.primary }]}>
               {currentHz.toFixed(1)}
             </Text>
             <Text style={[styles.telemetryUnit, { color: colors.textMuted }]}>Hz</Text>
           </View>
-          <Text style={[styles.subtextPill, { color: colors.textMuted }]}>
-            {currentHz > 5.5 ? 'Moderate Action' : 'Resting Baseline'}
+          <Text style={[styles.envelopeSubtext, { color: currentHz > activeProfile.maxTremorCeilingHz ? colors.danger : colors.textMuted }]}>
+            Ceiling: &lt; {activeProfile.maxTremorCeilingHz} Hz
           </Text>
         </View>
 
@@ -304,10 +391,20 @@ export default function LiveCanvasScreen() {
               {isTouched ? 'INKING' : 'HOVER'}
             </Text>
           </View>
-          <Text style={[styles.coordsMiniText, { color: colors.textMuted }]}>
-            X:{touchX} Y:{touchY}
+          <Text style={[styles.envelopeSubtext, { color: colors.textMuted }]}>
+            {activeProfile.conditionIndicator.split(' ')[0]}
           </Text>
         </View>
+      </View>
+
+      {/* Personalized Patient Profile Strip */}
+      <View style={[styles.aiProfileStrip, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
+        <ShieldCheckIcon size={14} color={activeProfile.isCalibrated ? colors.success : colors.primary} />
+        <Text style={[styles.aiProfileStripText, { color: colors.textSecondary }]}>
+          {activeProfile.isCalibrated
+            ? `Calibrated for ${activeProfile.patientId} • Bounds [${activeProfile.minSafePinchGrams}-${activeProfile.maxSafePinchGrams}g] • Stability ${activeProfile.stabilityIndex}%`
+            : `Population Baseline Active • Run 30s calibration in Hub to personalize`}
+        </Text>
       </View>
 
       {/* Drafting Tablet Frame */}
@@ -576,6 +673,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.textSecondary,
   },
+  aiAlertBanner: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  aiAlertTextCol: {
+    flex: 1,
+  },
+  aiAlertTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+  },
+  aiAlertSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  aiProfileStrip: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  aiProfileStripText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
   telemetryCard: {
     flexDirection: 'row',
     width: '100%',
@@ -630,6 +765,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: Colors.textSecondary,
     fontWeight: '600',
+  },
+  envelopeSubtext: {
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 4,
   },
   contactStateText: {
     fontSize: 14,

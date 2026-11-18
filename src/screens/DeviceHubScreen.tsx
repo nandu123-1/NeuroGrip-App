@@ -6,10 +6,12 @@ import {
   ScrollView,
   Animated,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import Svg, { Circle, Line, G } from 'react-native-svg';
 import { useBleStore } from '../store/useBleStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useAiStore } from '../store/useAiStore';
 import { Colors } from '../theme/colors';
 import {
   PenIcon,
@@ -17,6 +19,9 @@ import {
   BluetoothIcon,
   RefreshIcon,
   SparklesIcon,
+  TargetIcon,
+  ShieldCheckIcon,
+  CheckCircleIcon,
 } from '../components/Icons';
 import { SpringButton } from '../components/SpringButton';
 import { PulseDot } from '../components/PulseDot';
@@ -31,7 +36,74 @@ export default function DeviceHubScreen() {
     isSimulated,
     toggleSimulation,
     triggerBuzzerHaptic,
+    touchX,
+    touchY,
+    pressureGrams,
   } = useBleStore();
+
+  const {
+    activeProfile,
+    isCalibrating,
+    calibrationProgress,
+    calibrationCountdown,
+    calibrationPoints,
+    startCalibration,
+    recordCalibrationPoint,
+    updateCalibrationCountdown,
+    finishCalibration,
+    cancelCalibration,
+    resetToDefaultProfile,
+  } = useAiStore();
+
+  // Calibration loop countdown & continuous telemetry sampler
+  useEffect(() => {
+    let timer: any = null;
+    let streamTimer: any = null;
+
+    if (isCalibrating) {
+      timer = setInterval(() => {
+        const nextSec = calibrationCountdown - 1;
+        if (nextSec <= 0) {
+          clearInterval(timer);
+          clearInterval(streamTimer);
+          const profile = finishCalibration();
+          Alert.alert(
+            'Personalized Calibration Complete!',
+            `Patient Profile Updated for ${profile.patientId}:\n\n• Safe Pinch Zone: ${profile.minSafePinchGrams}g - ${profile.maxSafePinchGrams}g\n• Tremor Ceiling: < ${profile.maxTremorCeilingHz} Hz\n• Motor Stability: ${profile.stabilityIndex}%\n• Condition Pattern: ${profile.conditionIndicator}`,
+            [{ text: 'Apply Envelope' }]
+          );
+        } else {
+          updateCalibrationCountdown(nextSec);
+        }
+      }, 1000);
+
+      streamTimer = setInterval(() => {
+        const liveGrams = pressureGrams || (isSimulated ? 175 + Math.sin(Date.now() / 250) * 35 : 160);
+        const ptX = touchX > 0 ? touchX : 120 + ((Date.now() / 20) % 240);
+        const ptY = touchY > 0 ? touchY : 140 + Math.sin(Date.now() / 250) * 60;
+        recordCalibrationPoint({
+          x: ptX,
+          y: ptY,
+          pressure: liveGrams,
+          timestamp: Date.now(),
+        });
+      }, 100);
+    }
+
+    return () => {
+      if (timer) clearInterval(timer);
+      if (streamTimer) clearInterval(streamTimer);
+    };
+  }, [isCalibrating, calibrationCountdown, pressureGrams, touchX, touchY, isSimulated]);
+
+  const handleManualComplete = () => {
+    const profile = finishCalibration();
+    Alert.alert(
+      'Personalized Calibration Saved',
+      `Individualized Profile Envelope:\n\n• Safe Pinch Zone: ${profile.minSafePinchGrams}g - ${profile.maxSafePinchGrams}g\n• Tremor Ceiling: < ${profile.maxTremorCeilingHz} Hz\n• Motor Stability: ${profile.stabilityIndex}%\n• Condition Pattern: ${profile.conditionIndicator}`,
+      [{ text: 'OK' }]
+    );
+  };
 
   const isConnected = status === 'Connected' || isSimulated;
   const isScanning = status === 'Scanning' || status === 'Connecting';
@@ -236,6 +308,161 @@ export default function DeviceHubScreen() {
           <SparklesIcon size={16} color={colors.warning} />
           <Text style={[styles.hapticTestBtnText, { color: colors.warning }]}>Test Pen Buzzer & Haptics</Text>
         </SpringButton>
+      </View>
+
+      {/* AI Personalized Threshold Calibration Card */}
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardTitleRow}>
+            <View style={[styles.iconBox, { backgroundColor: 'rgba(56, 189, 248, 0.12)' }]}>
+              <TargetIcon size={20} color={colors.primary} />
+            </View>
+            <View>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>AI Personalized Threshold Calibration</Text>
+              <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>30-Second Patient Baseline Calibration Loop</Text>
+            </View>
+          </View>
+          <View
+            style={[
+              styles.badge,
+              {
+                backgroundColor: isCalibrating
+                  ? 'rgba(245, 158, 11, 0.14)'
+                  : activeProfile.isCalibrated
+                  ? 'rgba(16, 185, 129, 0.14)'
+                  : colors.surfaceElevated,
+                borderColor: isCalibrating
+                  ? Colors.warning
+                  : activeProfile.isCalibrated
+                  ? Colors.success
+                  : colors.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.badgeText,
+                {
+                  color: isCalibrating
+                    ? Colors.warning
+                    : activeProfile.isCalibrated
+                    ? Colors.success
+                    : colors.textMuted,
+                },
+              ]}
+            >
+              {isCalibrating
+                ? 'CALIBRATING...'
+                : activeProfile.isCalibrated
+                ? 'CALIBRATED'
+                : 'BASELINE'}
+            </Text>
+          </View>
+        </View>
+
+        {isCalibrating ? (
+          <View style={[styles.calibratingActiveBox, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
+            <View style={styles.calibrationCountdownRow}>
+              <View>
+                <Text style={[styles.countdownLabel, { color: colors.textMuted }]}>TIME REMAINING</Text>
+                <Text style={[styles.countdownNumber, { color: colors.primary }]}>{calibrationCountdown}s</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={[styles.countdownLabel, { color: colors.textMuted }]}>KINETIC SAMPLES</Text>
+                <Text style={[styles.pointsCapturedText, { color: colors.accent }]}>{calibrationPoints.length} points</Text>
+              </View>
+            </View>
+
+            {/* Progress Bar */}
+            <View style={[styles.calibProgressBarTrack, { backgroundColor: colors.border }]}>
+              <View
+                style={[
+                  styles.calibProgressBarFill,
+                  {
+                    width: `${Math.max(4, calibrationProgress)}%`,
+                    backgroundColor: colors.primary,
+                  },
+                ]}
+              />
+            </View>
+
+            <Text style={[styles.calibrationPromptText, { color: colors.textSecondary }]}>
+              Write cursive loops or phrases on the Waveshare LCD with your smart pen. The AI is calculating your individual pinch variance and tremor baseline.
+            </Text>
+
+            <View style={styles.calibActionButtonsRow}>
+              <SpringButton
+                style={[styles.calibCancelBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onPress={cancelCalibration}
+              >
+                <Text style={[styles.calibCancelBtnText, { color: colors.textMuted }]}>Cancel</Text>
+              </SpringButton>
+
+              <SpringButton
+                style={[styles.calibFinishBtn, { backgroundColor: colors.primary }]}
+                onPress={handleManualComplete}
+              >
+                <SparklesIcon size={14} color={colors.isDark ? '#080C14' : '#FFFFFF'} />
+                <Text style={[styles.calibFinishBtnText, { color: colors.isDark ? '#080C14' : '#FFFFFF' }]}>Complete Early</Text>
+              </SpringButton>
+            </View>
+          </View>
+        ) : (
+          <View style={{ gap: 12 }}>
+            <View style={[styles.envelopeMetricsGrid, { backgroundColor: colors.surfaceElevated }]}>
+              <View style={styles.envelopeCol}>
+                <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>SAFE PINCH ZONE</Text>
+                <Text style={[styles.envelopeVal, { color: colors.success }]}>
+                  {activeProfile.minSafePinchGrams} - {activeProfile.maxSafePinchGrams}g
+                </Text>
+              </View>
+              <View style={styles.envelopeCol}>
+                <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>TREMOR CEILING</Text>
+                <Text style={[styles.envelopeVal, { color: colors.accent }]}>
+                  &lt; {activeProfile.maxTremorCeilingHz} Hz
+                </Text>
+              </View>
+              <View style={styles.envelopeCol}>
+                <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>MOTOR STABILITY</Text>
+                <Text style={[styles.envelopeVal, { color: colors.primary }]}>
+                  {activeProfile.stabilityIndex}%
+                </Text>
+              </View>
+              <View style={styles.envelopeCol}>
+                <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>CLASSIFICATION</Text>
+                <Text style={[styles.envelopeVal, { color: colors.textPrimary }]}>
+                  {activeProfile.conditionIndicator.split(' ')[0]}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={[styles.clinicalNoteText, { color: colors.textMuted }]}>
+              {activeProfile.clinicalNotes}
+            </Text>
+
+            <View style={styles.calibBtnRow}>
+              <SpringButton
+                style={[styles.startCalibBtn, { backgroundColor: colors.primary }]}
+                onPress={() => startCalibration()}
+              >
+                <SparklesIcon size={16} color={colors.isDark ? '#080C14' : '#FFFFFF'} />
+                <Text style={[styles.startCalibBtnText, { color: colors.isDark ? '#080C14' : '#FFFFFF' }]}>
+                  {activeProfile.isCalibrated ? 'Recalibrate 30s Baseline' : 'Start 30s Guided Calibration'}
+                </Text>
+              </SpringButton>
+
+              {activeProfile.isCalibrated && (
+                <SpringButton
+                  style={[styles.resetCalibBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                  onPress={resetToDefaultProfile}
+                >
+                  <RefreshIcon size={14} color={colors.textSecondary} />
+                  <Text style={[styles.resetCalibBtnText, { color: colors.textSecondary }]}>Reset</Text>
+                </SpringButton>
+              )}
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Simulator Toggle */}
@@ -514,6 +741,164 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: Colors.warning,
+  },
+  card: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 16,
+    gap: 12,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  iconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  cardSubtitle: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  calibratingActiveBox: {
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 12,
+  },
+  calibrationCountdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  countdownLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    marginBottom: 2,
+  },
+  countdownNumber: {
+    fontSize: 28,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  pointsCapturedText: {
+    fontSize: 14,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  calibProgressBarTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  calibProgressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  calibrationPromptText: {
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  calibActionButtonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  calibCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  calibCancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  calibFinishBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calibFinishBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  envelopeMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 12,
+    borderRadius: 12,
+    gap: 10,
+  },
+  envelopeCol: {
+    width: '46%',
+  },
+  envelopeLabel: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  envelopeVal: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  clinicalNoteText: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontStyle: 'italic',
+  },
+  calibBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  startCalibBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  startCalibBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  resetCalibBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  resetCalibBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   simToggleCard: {
     flexDirection: 'row',

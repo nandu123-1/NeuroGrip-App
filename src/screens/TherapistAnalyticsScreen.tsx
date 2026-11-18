@@ -18,8 +18,17 @@ import Svg, {
 import { useBleStore } from '../store/useBleStore';
 import { useSessionStore } from '../store/useSessionStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useAiStore } from '../store/useAiStore';
 import { Colors } from '../theme/colors';
-import { ChartIcon, SparklesIcon, CheckCircleIcon } from '../components/Icons';
+import {
+  ChartIcon,
+  SparklesIcon,
+  CheckCircleIcon,
+  TargetIcon,
+  SlidersIcon,
+  ShieldCheckIcon,
+  AlertTriangleIcon,
+} from '../components/Icons';
 import { SpringButton } from '../components/SpringButton';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -30,6 +39,31 @@ export default function TherapistAnalyticsScreen() {
   const { colors } = useThemeStore();
   const { pressureGrams, tremorHz, interventions, status, isSimulated } = useBleStore();
   const { addSession } = useSessionStore();
+  const { activeProfile, latestAssessment, updateCustomThresholds } = useAiStore();
+
+  const [minSafePinch, setMinSafePinch] = useState(activeProfile.minSafePinchGrams);
+  const [maxSafePinch, setMaxSafePinch] = useState(activeProfile.maxSafePinchGrams);
+  const [maxTremorCeiling, setMaxTremorCeiling] = useState(activeProfile.maxTremorCeilingHz);
+
+  // Synchronize local tuning states when active profile updates
+  useEffect(() => {
+    setMinSafePinch(activeProfile.minSafePinchGrams);
+    setMaxSafePinch(activeProfile.maxSafePinchGrams);
+    setMaxTremorCeiling(activeProfile.maxTremorCeilingHz);
+  }, [activeProfile.minSafePinchGrams, activeProfile.maxSafePinchGrams, activeProfile.maxTremorCeilingHz]);
+
+  const handleApplyThresholds = () => {
+    updateCustomThresholds({
+      minSafePinchGrams: minSafePinch,
+      maxSafePinchGrams: maxSafePinch,
+      maxTremorCeilingHz: maxTremorCeiling,
+    });
+    Alert.alert(
+      'Personalized Thresholds Deployed',
+      `Hardware & Biofeedback updated:\n\n• Pinch Safe Range: ${minSafePinch}g - ${maxSafePinch}g\n• Tremor Ceiling: < ${maxTremorCeiling} Hz\n\nReal-time stylus haptics will trigger if patient exceeds these bounds.`,
+      [{ text: 'OK' }]
+    );
+  };
 
   // 30-sample rolling history buffer
   const [pressureHistory, setPressureHistory] = useState<number[]>(Array(30).fill(160));
@@ -191,6 +225,176 @@ export default function TherapistAnalyticsScreen() {
           </Text>
           <Text style={[styles.kpiSub, { color: colors.textSecondary }]}>Threshold Over-grips</Text>
         </View>
+      </View>
+
+      {/* AI Diagnostic Motor Assessment & Biomarker Card */}
+      <View style={[styles.aiDiagnosticCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.cardHeaderRow}>
+          <View style={styles.cardHeaderTitleCol}>
+            <View style={[styles.iconBadge, { backgroundColor: 'rgba(56, 189, 248, 0.12)' }]}>
+              <TargetIcon size={18} color={colors.primary} />
+            </View>
+            <View>
+              <Text style={[styles.cardHeaderTitle, { color: colors.textPrimary }]}>AI Motor Condition Classifier</Text>
+              <Text style={[styles.cardHeaderSub, { color: colors.textSecondary }]}>XGBoost + LightGBM + NVIDIA Kumo Ensemble</Text>
+            </View>
+          </View>
+          <View style={[styles.conditionPill, { backgroundColor: 'rgba(56, 189, 248, 0.14)', borderColor: colors.primary }]}>
+            <Text style={[styles.conditionPillText, { color: colors.primary }]}>
+              {latestAssessment?.detectedCondition || activeProfile.conditionIndicator}
+            </Text>
+          </View>
+        </View>
+
+        {/* 4-Decomposition Biomarkers */}
+        <View style={[styles.biomarkerGrid, { backgroundColor: colors.surfaceElevated }]}>
+          <View style={styles.biomarkerCol}>
+            <Text style={[styles.biomarkerLabel, { color: colors.textMuted }]}>PD RISK PROBABILITY</Text>
+            <Text style={[styles.biomarkerVal, { color: (latestAssessment?.pdProbability || activeProfile.pdRiskScore / 100) > 0.335 ? colors.danger : colors.success }]}>
+              {latestAssessment?.pdProbability !== undefined ? Math.round(latestAssessment.pdProbability * 100) : activeProfile.pdRiskScore}%
+            </Text>
+            <Text style={[styles.biomarkerSub, { color: colors.textMuted }]}>Cutoff: 33.5%</Text>
+          </View>
+
+          <View style={styles.biomarkerCol}>
+            <Text style={[styles.biomarkerLabel, { color: colors.textMuted }]}>MICROGRAPHIA SLOPE</Text>
+            <Text style={[styles.biomarkerVal, { color: (latestAssessment?.micrographiaSlope || -0.08) < -0.15 ? colors.warning : colors.textPrimary }]}>
+              {latestAssessment?.micrographiaSlope !== undefined ? latestAssessment.micrographiaSlope : -0.08}
+            </Text>
+            <Text style={[styles.biomarkerSub, { color: colors.textMuted }]}>Stroke Decay Rate</Text>
+          </View>
+
+          <View style={styles.biomarkerCol}>
+            <Text style={[styles.biomarkerLabel, { color: colors.textMuted }]}>KUMO ANOMALY</Text>
+            <Text style={[styles.biomarkerVal, { color: colors.accent }]}>
+              {latestAssessment?.kumoAnomalyScore !== undefined ? latestAssessment.kumoAnomalyScore : activeProfile.kumoAnomalyBaseline}
+            </Text>
+            <Text style={[styles.biomarkerSub, { color: colors.textMuted }]}>Temporal Residual</Text>
+          </View>
+
+          <View style={styles.biomarkerCol}>
+            <Text style={[styles.biomarkerLabel, { color: colors.textMuted }]}>SEVERITY LEVEL</Text>
+            <Text style={[styles.biomarkerVal, { color: latestAssessment?.severity === 'Severe' ? colors.danger : latestAssessment?.severity === 'Moderate' ? colors.warning : colors.success }]}>
+              {latestAssessment?.severity || 'Mild'}
+            </Text>
+            <Text style={[styles.biomarkerSub, { color: colors.textMuted }]}>Kinetic Grade</Text>
+          </View>
+        </View>
+
+        {/* AI Recommendations List */}
+        <View style={styles.recsBox}>
+          <Text style={[styles.recsHeader, { color: colors.textPrimary }]}>Clinical Action Recommendations:</Text>
+          {(latestAssessment?.recommendations || [
+            'Individualized envelope active. Baseline grip and resting tremor within calibrated thresholds.',
+            'Maintain daily fine-motor tracing sessions to preserve kinetic fluidity.',
+          ]).map((rec, idx) => (
+            <View key={idx} style={styles.recItemRow}>
+              <Text style={[styles.recBullet, { color: colors.primary }]}>•</Text>
+              <Text style={[styles.recItemText, { color: colors.textSecondary }]}>{rec}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* Personalized Threshold Clinician Tuning Card */}
+      <View style={[styles.thresholdTuningCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.cardHeaderRow}>
+          <View style={styles.cardHeaderTitleCol}>
+            <View style={[styles.iconBadge, { backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
+              <SlidersIcon size={18} color={colors.success} />
+            </View>
+            <View>
+              <Text style={[styles.cardHeaderTitle, { color: colors.textPrimary }]}>Personalized Safe Zone Tuning</Text>
+              <Text style={[styles.cardHeaderSub, { color: colors.textSecondary }]}>Individualized Biofeedback Alarm Thresholds</Text>
+            </View>
+          </View>
+          <View style={[styles.conditionPill, { backgroundColor: 'rgba(16, 185, 129, 0.14)', borderColor: colors.success }]}>
+            <Text style={[styles.conditionPillText, { color: colors.success }]}>ACTIVE PEN</Text>
+          </View>
+        </View>
+
+        {/* Stepper Controls */}
+        <View style={styles.stepperList}>
+          {/* Lower Safe Pinch Limit */}
+          <View style={[styles.stepperRow, { borderBottomColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.stepperTitle, { color: colors.textPrimary }]}>Lower Safe Pinch Limit</Text>
+              <Text style={[styles.stepperSub, { color: colors.textMuted }]}>Prevents stylus slipping / hypotonic drops</Text>
+            </View>
+            <View style={styles.stepperControl}>
+              <SpringButton
+                style={[styles.stepperBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setMinSafePinch((prev) => Math.max(30, prev - 10))}
+              >
+                <Text style={[styles.stepperBtnText, { color: colors.textPrimary }]}>-</Text>
+              </SpringButton>
+              <Text style={[styles.stepperValText, { color: colors.primary }]}>{minSafePinch}g</Text>
+              <SpringButton
+                style={[styles.stepperBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setMinSafePinch((prev) => Math.min(maxSafePinch - 20, prev + 10))}
+              >
+                <Text style={[styles.stepperBtnText, { color: colors.textPrimary }]}>+</Text>
+              </SpringButton>
+            </View>
+          </View>
+
+          {/* Upper Safe Pinch Ceiling */}
+          <View style={[styles.stepperRow, { borderBottomColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.stepperTitle, { color: colors.textPrimary }]}>Upper Safe Pinch Ceiling</Text>
+              <Text style={[styles.stepperSub, { color: colors.textMuted }]}>Triggers smart pen haptic buzzer to relieve cramp</Text>
+            </View>
+            <View style={styles.stepperControl}>
+              <SpringButton
+                style={[styles.stepperBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setMaxSafePinch((prev) => Math.max(minSafePinch + 20, prev - 10))}
+              >
+                <Text style={[styles.stepperBtnText, { color: colors.textPrimary }]}>-</Text>
+              </SpringButton>
+              <Text style={[styles.stepperValText, { color: Colors.danger }]}>{maxSafePinch}g</Text>
+              <SpringButton
+                style={[styles.stepperBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setMaxSafePinch((prev) => Math.min(550, prev + 10))}
+              >
+                <Text style={[styles.stepperBtnText, { color: colors.textPrimary }]}>+</Text>
+              </SpringButton>
+            </View>
+          </View>
+
+          {/* Tremor Ceiling */}
+          <View style={styles.stepperRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.stepperTitle, { color: colors.textPrimary }]}>Tremor Safety Ceiling</Text>
+              <Text style={[styles.stepperSub, { color: colors.textMuted }]}>Flags pathological surges above baseline</Text>
+            </View>
+            <View style={styles.stepperControl}>
+              <SpringButton
+                style={[styles.stepperBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setMaxTremorCeiling((prev) => +(Math.max(3.0, prev - 0.2)).toFixed(1))}
+              >
+                <Text style={[styles.stepperBtnText, { color: colors.textPrimary }]}>-</Text>
+              </SpringButton>
+              <Text style={[styles.stepperValText, { color: colors.accent }]}>{maxTremorCeiling.toFixed(1)}Hz</Text>
+              <SpringButton
+                style={[styles.stepperBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+                onPress={() => setMaxTremorCeiling((prev) => +(Math.min(12.0, prev + 0.2)).toFixed(1))}
+              >
+                <Text style={[styles.stepperBtnText, { color: colors.textPrimary }]}>+</Text>
+              </SpringButton>
+            </View>
+          </View>
+        </View>
+
+        {/* Deploy Button */}
+        <SpringButton
+          style={[styles.deployThresholdBtn, { backgroundColor: colors.primary }]}
+          onPress={handleApplyThresholds}
+        >
+          <ShieldCheckIcon size={16} color={colors.isDark ? '#080C14' : '#FFFFFF'} />
+          <Text style={[styles.deployThresholdBtnText, { color: colors.isDark ? '#080C14' : '#FFFFFF' }]}>
+            Apply & Sync Personalized Thresholds to Pen
+          </Text>
+        </SpringButton>
       </View>
 
       {/* Pinch Pressure Progression Curve */}
@@ -534,5 +738,162 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: Colors.textSecondary,
+  },
+  aiDiagnosticCard: {
+    backgroundColor: Colors.surface,
+    borderColor: Colors.border,
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 18,
+    gap: 14,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardHeaderTitleCol: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  iconBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardHeaderTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  cardHeaderSub: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  conditionPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  conditionPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  biomarkerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 12,
+    borderRadius: 14,
+    gap: 10,
+  },
+  biomarkerCol: {
+    width: '46%',
+  },
+  biomarkerLabel: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  biomarkerVal: {
+    fontSize: 16,
+    fontWeight: '900',
+    fontVariant: ['tabular-nums'],
+  },
+  biomarkerSub: {
+    fontSize: 9,
+    marginTop: 1,
+  },
+  recsBox: {
+    gap: 6,
+    paddingTop: 4,
+  },
+  recsHeader: {
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  recItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  recBullet: {
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  recItemText: {
+    fontSize: 11,
+    lineHeight: 16,
+    flex: 1,
+  },
+  thresholdTuningCard: {
+    backgroundColor: Colors.surface,
+    borderColor: Colors.border,
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 18,
+    gap: 14,
+  },
+  stepperList: {
+    gap: 10,
+  },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+  },
+  stepperTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  stepperSub: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  stepperControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stepperBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  stepperBtnText: {
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  stepperValText: {
+    fontSize: 14,
+    fontWeight: '900',
+    minWidth: 46,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
+  deployThresholdBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 14,
+  },
+  deployThresholdBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

@@ -1,5 +1,5 @@
 import React from 'react';
-import Svg, { Path, Circle, Rect, Polyline } from 'react-native-svg';
+import Svg, { Path, Circle, Rect, Polyline, Line } from 'react-native-svg';
 
 interface IconProps {
   color?: string;
@@ -167,4 +167,42 @@ export const MoonIcon: React.FC<IconProps> = ({ color = '#38BDF8', size = 20 }) 
     <Path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
   </Svg>
 );
+
+export const TargetIcon: React.FC<IconProps> = ({ color = '#38BDF8', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx="12" cy="12" r="10" />
+    <Circle cx="12" cy="12" r="6" />
+    <Circle cx="12" cy="12" r="2" />
+  </Svg>
+);
+
+export const SlidersIcon: React.FC<IconProps> = ({ color = '#38BDF8', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <Line x1="4" y1="21" x2="4" y2="14" />
+    <Line x1="4" y1="10" x2="4" y2="3" />
+    <Line x1="12" y1="21" x2="12" y2="12" />
+    <Line x1="12" y1="8" x2="12" y2="3" />
+    <Line x1="20" y1="21" x2="20" y2="16" />
+    <Line x1="20" y1="12" x2="20" y2="3" />
+    <Line x1="1" y1="14" x2="7" y2="14" />
+    <Line x1="9" y1="8" x2="15" y2="8" />
+    <Line x1="17" y1="16" x2="23" y2="16" />
+  </Svg>
+);
+
+export const ShieldCheckIcon: React.FC<IconProps> = ({ color = '#10B981', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    <Path d="m9 12 2 2 4-4" />
+  </Svg>
+);
+
+export const AlertTriangleIcon: React.FC<IconProps> = ({ color = '#EF4444', size = 20 }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <Path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+    <Line x1="12" y1="9" x2="12" y2="13" />
+    <Line x1="12" y1="17" x2="12.01" y2="17" />
+  </Svg>
+);
+
 

@@ -42,7 +42,19 @@ This repository contains the **NeuroGrip Companion Mobile Application**, built w
 - **Micrographia Decay Slope**: Automated measurement of progressive font size reduction during prolonged writing.
 - **Longitudinal Neuromuscular Stability Score**: AI-ready metrics quantifying daily motor stability trends.
 
-### 🌓 5. Minimalist Adaptive Design
+### 🤖 5. On-Device AI Model & Personalized Adaptive Thresholds
+- **Multi-Condition Diagnostic Classifier**: Built on trained XGBoost + LightGBM + NVIDIA Kumo-Anomaly ensemble architecture:
+  - **Parkinson's Disease**: 4–7 Hz kinetic/action tremor + progressive micrographia decay slope ($\Delta \text{area} < -0.15$) + Kumo anomaly residual ($>0.335$ calibrated threshold).
+  - **Essential Tremor**: 8–12 Hz high-frequency kinetic action tremor with preserved stroke amplitude.
+  - **Dysgraphia**: Elevated stroke jerk metric ($>850$) + irregular pinch force variance ($>35$) + spatial disorganization.
+  - **Hypertonic Clamping / Writer's Cramp**: Sustained flexor over-grip ($>320\text{g}$) triggering fatigue warnings.
+- **30-Second Patient Calibration Loop**: Automatically personalizes biometric envelopes based on individual grip variance:
+  - `minSafePinchGrams`: Lower boundary preventing stylus slippage.
+  - `maxSafePinchGrams`: Upper safety ceiling triggering pen haptic buzzer to relieve muscle strain.
+  - `maxTremorCeilingHz`: Patient-specific ceiling flagging acute tremor surges.
+- **Therapist Fine-Tuning Deck**: Stepper controls in the Therapist Analytics screen allow clinical specialists to customize thresholds for individual motor recovery plans.
+
+### 🌓 6. Minimalist Adaptive Design
 - Built from the ground up with high-contrast **Light Mode** and **Dark Mode** themes.
 - Ergonomically tuned typography and optical alignment adhering to WCAG 2.2 AA accessibility guidelines.
 
