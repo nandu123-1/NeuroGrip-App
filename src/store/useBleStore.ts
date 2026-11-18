@@ -31,17 +31,32 @@ export interface FsrCalibration {
 }
 
 export function convertFsrAdcToGrams(rawAdc: number, calib: FsrCalibration): number {
-  if (!calib || rawAdc <= (calib.adcZero || 25) + 6) {
+  if (!calib) return 0;
+  
+  // Auto-detect 12-bit (0-4095) vs 10-bit (0-1023) ADC architecture
+  const is12Bit = rawAdc > 1023 || (calib.adcReference && calib.adcReference > 1023);
+  const effectiveZero = calib.adcZero ?? (is12Bit ? 90 : 25);
+
+  if (rawAdc <= effectiveZero + (is12Bit ? 20 : 6)) {
     return 0; // Filter resting sensor noise floor
   }
-  const effective = rawAdc - calib.adcZero;
-  const refEffective = Math.max(25, (calib.adcReference || 450) - calib.adcZero);
+
+  const effective = rawAdc - effectiveZero;
+  
+  // If calib.adcReference was set with 10-bit (<=1023) but live signal is 12-bit, adapt reference dynamically
+  let nominalRef = calib.adcReference || (is12Bit ? 2600 : 450);
+  if (is12Bit && nominalRef <= 1023) {
+    nominalRef = Math.round(nominalRef * (4095 / 1023));
+  }
+
+  const refEffective = Math.max(30, nominalRef - effectiveZero);
   const ratio = Math.max(0, effective / refEffective);
-  // Non-linear FSR 402 conductance curve
+
+  // Non-linear FSR 402 conductance power-law curve: F ~ (G)^gamma
   const exponent = calib.exponent || 0.88;
   const refGrams = calib.referenceGrams || 250;
   const grams = Math.round(refGrams * Math.pow(ratio, exponent));
-  return Math.max(0, Math.min(800, grams));
+  return Math.max(0, Math.min(850, grams));
 }
 
 interface BleState {
@@ -114,8 +129,8 @@ export const useBleStore = create<BleState>((set, get) => ({
   isSimulated: false,
 
   fsrCalibration: {
-    adcZero: 25,
-    adcReference: 450,
+    adcZero: 90,
+    adcReference: 2600,
     referenceGrams: 250,
     exponent: 0.88,
     isCalibrated: false,
@@ -126,7 +141,7 @@ export const useBleStore = create<BleState>((set, get) => ({
     set((state) => ({
       fsrCalibration: {
         ...state.fsrCalibration,
-        adcZero: Math.max(0, Math.min(350, live)),
+        adcZero: Math.max(0, Math.min(1500, live)),
         isCalibrated: true,
       },
       pressureGrams: 0,
@@ -136,7 +151,7 @@ export const useBleStore = create<BleState>((set, get) => ({
   setFsrReferenceGrip: (refAdc?: number, targetGrams = 250) => {
     const live = refAdc !== undefined ? refAdc : get().pressure;
     const base = get().fsrCalibration.adcZero;
-    const cleanRef = Math.max(base + 40, live);
+    const cleanRef = Math.max(base + 80, live);
     set((state) => ({
       fsrCalibration: {
         ...state.fsrCalibration,
@@ -151,8 +166,8 @@ export const useBleStore = create<BleState>((set, get) => ({
   resetFsrCalibration: () => {
     set({
       fsrCalibration: {
-        adcZero: 25,
-        adcReference: 450,
+        adcZero: 90,
+        adcReference: 2600,
         referenceGrams: 250,
         exponent: 0.88,
         isCalibrated: false,
@@ -439,7 +454,7 @@ export const useBleStore = create<BleState>((set, get) => ({
                   const isDown = x > 0 && y > 0;
 
                   const grams = convertFsrAdcToGrams(p, get().fsrCalibration);
-                  const isTriggered = p > 700 || t > 6000;
+                  const isTriggered = grams > 420 || t > 6000;
 
                   set((state) => {
                     let newInterventions = state.interventions;
@@ -514,7 +529,7 @@ export const useBleStore = create<BleState>((set, get) => ({
                   : Math.round(parseFloat(gripMatch![2]) * 1000);
 
                 const grams = convertFsrAdcToGrams(currentPressure, get().fsrCalibration);
-                const isTriggered = currentPressure > 700 || currentTremor > 6000;
+                const isTriggered = grams > 420 || currentTremor > 6000;
 
                 set((state) => {
                   let newInterventions = state.interventions;

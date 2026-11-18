@@ -317,14 +317,14 @@ export class NeuroGripAiEngine {
     const evaluation = this.evaluateMotorCondition(features);
 
     // Compute individualized thresholds with clinical conformal tolerance
-    const meanPinch = Math.max(120, Math.min(380, Math.round(features.meanPinchForce)));
-    const stdPinch = Math.max(15, Math.min(50, Math.round(features.pinchForceVariance)));
+    const meanPinch = Math.max(80, Math.min(650, Math.round(features.meanPinchForce)));
+    const stdPinch = Math.max(15, Math.min(80, Math.round(features.pinchForceVariance)));
 
     // Personalized pinch boundaries:
-    // Safe lower bound: ~1.0 std below mean, strictly clamped between 50g and 160g
-    const minSafePinchGrams = Math.max(50, Math.min(160, Math.round(meanPinch - 1.0 * stdPinch)));
-    // Safe upper bound: ~1.5 std above mean, guaranteed to be at least minSafe + 80g (clamped to 480g)
-    const maxSafePinchGrams = Math.max(minSafePinchGrams + 80, Math.min(480, Math.round(meanPinch + 1.5 * stdPinch)));
+    // Safe lower bound: ~1.2 std below mean, bounded at 40g minimum
+    const minSafePinchGrams = Math.max(40, Math.round(meanPinch - 1.2 * stdPinch));
+    // Safe upper bound: ~1.6 std above mean, guaranteed to be at least minSafe + 60g (up to 750g)
+    const maxSafePinchGrams = Math.max(minSafePinchGrams + 60, Math.min(750, Math.round(meanPinch + 1.6 * stdPinch)));
 
     // Personalized tremor ceiling:
     // Allows patient's baseline tremor, but flags surges exceeding 1.4x baseline

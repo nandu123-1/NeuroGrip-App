@@ -376,8 +376,12 @@ export default function DeviceHubScreen() {
         {/* Live ADC & Calibrated Force Readouts */}
         <View style={[styles.envelopeMetricsGrid, { backgroundColor: colors.surfaceElevated }]}>
           <View style={styles.envelopeCol}>
-            <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>RAW FSR ADC</Text>
-            <Text style={[styles.envelopeVal, { color: colors.textPrimary }]}>{pressure} / 1023</Text>
+            <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>
+              {pressure > 1023 || fsrCalibration.adcReference > 1023 ? 'RAW FSR (12-bit)' : 'RAW FSR (10-bit)'}
+            </Text>
+            <Text style={[styles.envelopeVal, { color: colors.textPrimary }]}>
+              {pressure} / {pressure > 1023 || fsrCalibration.adcReference > 1023 ? '4095' : '1023'}
+            </Text>
           </View>
           <View style={styles.envelopeCol}>
             <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>CALIBRATED LOAD</Text>
@@ -399,8 +403,8 @@ export default function DeviceHubScreen() {
             style={[
               styles.calibProgressBarFill,
               {
-                width: `${Math.min(100, Math.max(3, (pressureGrams / 550) * 100))}%`,
-                backgroundColor: pressureGrams > 350 ? Colors.danger : colors.primary,
+                width: `${Math.min(100, Math.max(3, (pressureGrams / 650) * 100))}%`,
+                backgroundColor: pressureGrams > (activeProfile.maxSafePinchGrams || 350) ? Colors.danger : colors.primary,
               },
             ]}
           />

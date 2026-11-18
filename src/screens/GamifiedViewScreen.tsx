@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useBleStore } from '../store/useBleStore';
 import { useThemeStore } from '../store/useThemeStore';
+import { useAiStore } from '../store/useAiStore';
 import { Colors } from '../theme/colors';
 import SkyGliderGame from '../components/SkyGliderGame';
 import ZenKoiGame from '../components/ZenKoiGame';
@@ -33,6 +34,7 @@ type ActiveTab = 'glider' | 'koi' | 'forge' | 'coach';
 // Isolated, memoized Bio Coach tab so high-frequency sensor updates don't re-render games
 const BioCoachTab = React.memo(function BioCoachTab({ stars }: { stars: number }) {
   const { pressure, tremor, status, interventions, pressureGrams } = useBleStore();
+  const { activeProfile } = useAiStore();
   const { colors } = useThemeStore();
   const [pulseAnim] = useState(new Animated.Value(1));
 
@@ -55,6 +57,9 @@ const BioCoachTab = React.memo(function BioCoachTab({ stars }: { stars: number }
     return () => breathingLoop.stop();
   }, [pulseAnim]);
 
+  const pinchGrams = pressureGrams || (pressure > 1023 ? Math.round((pressure / 4095) * 600) : Math.round((pressure / 1023) * 600));
+  const maxSafePinch = activeProfile?.maxSafePinchGrams || 380;
+
   let message = 'Optimal Motor Balance';
   let subMessage = 'Smooth neuromuscular control with gentle finger flexor tension.';
   let themeColor = colors.success;
@@ -67,9 +72,9 @@ const BioCoachTab = React.memo(function BioCoachTab({ stars }: { stars: number }
     themeColor = colors.textMuted;
     glowColor = colors.isDark ? 'rgba(100, 116, 139, 0.1)' : 'rgba(148, 163, 184, 0.15)';
     iconComponent = <LightbulbIcon size={48} color={themeColor} />;
-  } else if (pressure > 700) {
+  } else if (pinchGrams > maxSafePinch) {
     message = 'Relax Pinch Grip';
-    subMessage = 'Finger pinch load exceeds 700g. Lighten your grip to avoid flexor spasm.';
+    subMessage = `Finger pinch load (${pinchGrams}g) exceeds personal safe ceiling (${maxSafePinch}g). Lighten your grip.`;
     themeColor = colors.warning;
     glowColor = colors.isDark ? 'rgba(245, 158, 11, 0.25)' : 'rgba(217, 119, 6, 0.15)';
     iconComponent = <LightbulbIcon size={48} color={themeColor} />;
@@ -82,7 +87,6 @@ const BioCoachTab = React.memo(function BioCoachTab({ stars }: { stars: number }
   }
 
   const isOnline = status === 'Connected';
-  const pinchGrams = pressureGrams || Math.round((pressure / 1023) * 600);
 
   return (
     <View style={[styles.coachContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
