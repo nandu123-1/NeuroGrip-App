@@ -45,6 +45,7 @@ export default function DeviceHubScreen() {
     setFsrTareZero,
     setFsrReferenceGrip,
     resetFsrCalibration,
+    syncPersonalizedLimitsToPen,
   } = useBleStore();
 
   const {
@@ -134,6 +135,23 @@ export default function DeviceHubScreen() {
       `Individualized Profile Envelope:\n\n• Safe Pinch Zone: ${profile.minSafePinchGrams}g - ${profile.maxSafePinchGrams}g\n• Tremor Ceiling: < ${profile.maxTremorCeilingHz} Hz\n• Motor Stability: ${profile.stabilityIndex}%\n• Condition Pattern: ${profile.conditionIndicator}`,
       [{ text: 'OK' }]
     );
+  };
+
+  const handleSyncPenLimits = async () => {
+    const ok = await syncPersonalizedLimitsToPen();
+    if (ok) {
+      Alert.alert(
+        'Synced to Smart Pen!',
+        `Personalized Envelope active on hardware:\n\n• Safe Pinch: ${activeProfile.minSafePinchGrams}g - ${activeProfile.maxSafePinchGrams}g\n• Tremor Ceiling: < ${activeProfile.maxTremorCeilingHz} Hz\n\nThe pen received the new limits via BLE and confirmed with an acknowledgement chirp.`,
+        [{ text: 'OK' }]
+      );
+    } else {
+      Alert.alert(
+        'Pen Not Connected',
+        'Connect the Smart Pen or Writing Pad first to sync personalized thresholds to the pen firmware.',
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const isConnected = status === 'Connected' || isSimulated;
@@ -594,6 +612,20 @@ export default function DeviceHubScreen() {
                 </SpringButton>
               )}
             </View>
+
+            {/* Sync limits directly to Pen firmware */}
+            <SpringButton
+              style={[
+                styles.syncPenBtn,
+                { backgroundColor: colors.surfaceElevated, borderColor: colors.primary, borderWidth: 1, marginTop: 10 },
+              ]}
+              onPress={handleSyncPenLimits}
+            >
+              <SparklesIcon size={14} color={colors.primary} />
+              <Text style={[styles.syncPenBtnText, { color: colors.primary }]}>
+                ⚡ Sync Personalized Limits to Pen ({activeProfile.minSafePinchGrams}g - {activeProfile.maxSafePinchGrams}g)
+              </Text>
+            </SpringButton>
           </View>
         )}
       </View>
@@ -1032,6 +1064,18 @@ const styles = StyleSheet.create({
   resetCalibBtnText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  syncPenBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  syncPenBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
   },
   simToggleCard: {
     flexDirection: 'row',

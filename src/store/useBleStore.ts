@@ -59,6 +59,23 @@ export function convertFsrAdcToGrams(rawAdc: number, calib: FsrCalibration): num
   return Math.max(0, Math.min(850, grams));
 }
 
+export function convertGramsToFsrAdc(grams: number, calib: FsrCalibration): number {
+  if (!calib || grams <= 0) return calib?.adcZero ?? 90;
+  const is12Bit = calib.adcReference > 1023 || calib.adcZero > 50;
+  const effectiveZero = calib.adcZero ?? (is12Bit ? 90 : 25);
+  let nominalRef = calib.adcReference || (is12Bit ? 2600 : 450);
+  if (is12Bit && nominalRef <= 1023) {
+    nominalRef = Math.round(nominalRef * (4095 / 1023));
+  }
+  const refGrams = calib.referenceGrams || 250;
+  const exponent = calib.exponent || 0.88;
+  const refEffective = Math.max(30, nominalRef - effectiveZero);
+  const ratio = Math.pow(Math.max(0.01, grams / refGrams), 1.0 / exponent);
+  const effective = ratio * refEffective;
+  const rawAdc = Math.round(effectiveZero + effective);
+  return Math.max(0, Math.min(is12Bit ? 4095 : 1023, rawAdc));
+}
+
 interface BleState {
   status: ConnectionStatus;
   device: Device | null;
@@ -67,8 +84,8 @@ interface BleState {
   touchX: number;
   touchY: number;
   isTouched: boolean;
-  pressure: number;            // 0 - 1023
-  pressureGrams: number;       // Calibrated 0 - 600g
+  pressure: number;            // 0 - 1023 / 4095
+  pressureGrams: number;       // Calibrated 0 - 850g
   tremor: number;              // Tremor Magnitude
   tremorHz: number;            // Tremor Frequency
   penBattery: number;          // 0 - 100%
@@ -100,6 +117,7 @@ interface BleState {
   sendCommand: (cmd: string) => Promise<void>;
   toggleSimulation: () => void;
   triggerBuzzerHaptic: () => Promise<void>;
+  syncPersonalizedLimitsToPen: (minGrams?: number, maxGrams?: number) => Promise<boolean>;
 }
 
 let monitorSubscription: Subscription | null = null;
@@ -339,6 +357,31 @@ export const useBleStore = create<BleState>((set, get) => ({
     }
   },
 
+  syncPersonalizedLimitsToPen: async (minGrams?: number, maxGrams?: number) => {
+    const { fsrCalibration, sendCommand, device, status } = get();
+    if (!device || status !== 'Connected') {
+      console.log('[BLE] Pen not connected. Threshold will sync upon reconnection.');
+      return false;
+    }
+    try {
+      const { useAiStore } = require('./useAiStore');
+      const activeProfile = useAiStore.getState().activeProfile;
+      const targetMinG = minGrams ?? activeProfile.minSafePinchGrams;
+      const targetMaxG = maxGrams ?? activeProfile.maxSafePinchGrams;
+
+      const minAdc = convertGramsToFsrAdc(targetMinG, fsrCalibration);
+      const maxAdc = convertGramsToFsrAdc(targetMaxG, fsrCalibration);
+
+      const cmd = `CMD:THRESH:${minAdc},${maxAdc}`;
+      await sendCommand(cmd);
+      console.log(`[BLE] Synced personalized thresholds to pen: ${cmd} (${targetMinG}g - ${targetMaxG}g)`);
+      return true;
+    } catch (err) {
+      console.warn('[BLE] Could not sync thresholds to pen:', err);
+      return false;
+    }
+  },
+
   connectAndStartListening: async () => {
     set({ status: 'Scanning' });
 
@@ -398,6 +441,11 @@ export const useBleStore = create<BleState>((set, get) => ({
               get().sendCommand(cmd);
             }
           }, 350);
+
+          // Auto-sync personalized limits to pen
+          setTimeout(() => {
+            get().syncPersonalizedLimitsToPen();
+          }, 700);
 
           disconnectSubscription = bleManager.onDeviceDisconnected(connectedDevice.id, () => {
             set({ status: 'Disconnected', device: null, isTouched: false });

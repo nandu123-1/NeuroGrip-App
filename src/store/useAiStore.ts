@@ -148,6 +148,14 @@ export const useAiStore = create<AiState>((set, get) => ({
       calibrationPoints: [],
     });
 
+    // Auto-sync personalized limits to Smart Pen firmware via BLE
+    try {
+      const { useBleStore } = require('./useBleStore');
+      useBleStore.getState().syncPersonalizedLimitsToPen(calibrated.minSafePinchGrams, calibrated.maxSafePinchGrams);
+    } catch (e) {
+      console.warn('[AI] Could not auto-sync limits to pen on calibration finish', e);
+    }
+
     return calibrated;
   },
 
@@ -271,6 +279,14 @@ export const useAiStore = create<AiState>((set, get) => ({
       clinicalNotes: `Manual therapist override on ${new Date().toLocaleDateString()}. Bounds: [${newMin}g - ${newMax}g], Tremor: <${newTremor}Hz`,
     };
     set({ activeProfile: updated });
+
+    // Sync updated manual thresholds to pen firmware
+    try {
+      const { useBleStore } = require('./useBleStore');
+      useBleStore.getState().syncPersonalizedLimitsToPen(newMin, newMax);
+    } catch (e) {
+      console.warn('[AI] Could not auto-sync custom limits to pen', e);
+    }
   },
 
   resetToDefaultProfile: () => {
