@@ -22,6 +22,28 @@ export type Stroke = Point[];
 
 export type ConnectionStatus = 'Disconnected' | 'Scanning' | 'Connecting' | 'Connected';
 
+export interface FsrCalibration {
+  adcZero: number;          // Tare baseline (ADC with no pressure)
+  adcReference: number;     // Reference grip ADC
+  referenceGrams: number;   // Target grams at reference grip (e.g. 250g)
+  exponent: number;         // Power-law exponent
+  isCalibrated: boolean;
+}
+
+export function convertFsrAdcToGrams(rawAdc: number, calib: FsrCalibration): number {
+  if (!calib || rawAdc <= (calib.adcZero || 25) + 6) {
+    return 0; // Filter resting sensor noise floor
+  }
+  const effective = rawAdc - calib.adcZero;
+  const refEffective = Math.max(25, (calib.adcReference || 450) - calib.adcZero);
+  const ratio = Math.max(0, effective / refEffective);
+  // Non-linear FSR 402 conductance curve
+  const exponent = calib.exponent || 0.88;
+  const refGrams = calib.referenceGrams || 250;
+  const grams = Math.round(refGrams * Math.pow(ratio, exponent));
+  return Math.max(0, Math.min(800, grams));
+}
+
 interface BleState {
   status: ConnectionStatus;
   device: Device | null;
@@ -37,6 +59,12 @@ interface BleState {
   penBattery: number;          // 0 - 100%
   padStatus: string;
   interventions: number;
+
+  // FSR 402 Calibration
+  fsrCalibration: FsrCalibration;
+  setFsrTareZero: (zeroAdc?: number) => void;
+  setFsrReferenceGrip: (refAdc?: number, targetGrams?: number) => void;
+  resetFsrCalibration: () => void;
   
   // Interactive Canvas Strokes
   strokes: Stroke[];
@@ -84,6 +112,53 @@ export const useBleStore = create<BleState>((set, get) => ({
   testMode: 'alphabet',
   alphabetSet: 'upper',
   isSimulated: false,
+
+  fsrCalibration: {
+    adcZero: 25,
+    adcReference: 450,
+    referenceGrams: 250,
+    exponent: 0.88,
+    isCalibrated: false,
+  },
+
+  setFsrTareZero: (zeroAdc?: number) => {
+    const live = zeroAdc !== undefined ? zeroAdc : get().pressure;
+    set((state) => ({
+      fsrCalibration: {
+        ...state.fsrCalibration,
+        adcZero: Math.max(0, Math.min(350, live)),
+        isCalibrated: true,
+      },
+      pressureGrams: 0,
+    }));
+  },
+
+  setFsrReferenceGrip: (refAdc?: number, targetGrams = 250) => {
+    const live = refAdc !== undefined ? refAdc : get().pressure;
+    const base = get().fsrCalibration.adcZero;
+    const cleanRef = Math.max(base + 40, live);
+    set((state) => ({
+      fsrCalibration: {
+        ...state.fsrCalibration,
+        adcReference: cleanRef,
+        referenceGrams: targetGrams,
+        isCalibrated: true,
+      },
+      pressureGrams: targetGrams,
+    }));
+  },
+
+  resetFsrCalibration: () => {
+    set({
+      fsrCalibration: {
+        adcZero: 25,
+        adcReference: 450,
+        referenceGrams: 250,
+        exponent: 0.88,
+        isCalibrated: false,
+      },
+    });
+  },
 
   resetInterventions: () => set({ interventions: 0 }),
   
@@ -177,7 +252,7 @@ export const useBleStore = create<BleState>((set, get) => ({
         const simX = targetPt.x + Math.round((Math.random() - 0.5) * 2);
         const simY = targetPt.y + Math.round((Math.random() - 0.5) * 2);
         const simPressure = Math.round(340 + 120 * Math.sin(letterProgress * 0.4));
-        const simGrams = Math.round((simPressure / 1023) * 550);
+        const simGrams = convertFsrAdcToGrams(simPressure, get().fsrCalibration);
         const simTremor = Math.round(2100 + 1500 * Math.abs(Math.sin(letterProgress * 0.2)));
         const simTremorHz = +(3.6 + Math.sin(letterProgress * 0.1) * 0.8).toFixed(1);
 
@@ -363,7 +438,7 @@ export const useBleStore = create<BleState>((set, get) => ({
                   const t = parseInt(parts[3].slice(2), 10) || 0;
                   const isDown = x > 0 && y > 0;
 
-                  const grams = Math.round((p / 1023) * 550);
+                  const grams = convertFsrAdcToGrams(p, get().fsrCalibration);
                   const isTriggered = p > 700 || t > 6000;
 
                   set((state) => {
@@ -438,7 +513,7 @@ export const useBleStore = create<BleState>((set, get) => ({
                   ? parseInt(match[2], 10)
                   : Math.round(parseFloat(gripMatch![2]) * 1000);
 
-                const grams = Math.round((currentPressure / 1023) * 550);
+                const grams = convertFsrAdcToGrams(currentPressure, get().fsrCalibration);
                 const isTriggered = currentPressure > 700 || currentTremor > 6000;
 
                 set((state) => {

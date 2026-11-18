@@ -67,17 +67,17 @@ export default function LiveCanvasScreen() {
   } = useAiStore();
 
   const isOnline = status === 'Connected' || isSimulated;
-  const pinchGrams = pressureGrams || Math.round((pressure / 1023) * 600);
+  const pinchGrams = pressureGrams;
   const currentHz = tremorHz || (isOnline ? 3.8 : 0);
 
   // Real-time AI Threshold monitoring & Pen Haptic Trigger
   useEffect(() => {
     if (isOnline && (pinchGrams > 0 || currentHz > 0)) {
-      checkLiveTelemetry(pinchGrams, currentHz, () => {
+      checkLiveTelemetry(pinchGrams, currentHz, isTouched, () => {
         triggerBuzzerHaptic().catch(() => {});
       });
     }
-  }, [pinchGrams, currentHz, isOnline, checkLiveTelemetry, triggerBuzzerHaptic]);
+  }, [pinchGrams, currentHz, isTouched, isOnline, checkLiveTelemetry, triggerBuzzerHaptic]);
 
   // Animated cursor pulsation
   const touchAnim = useRef(new Animated.Value(1)).current;

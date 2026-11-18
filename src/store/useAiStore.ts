@@ -43,6 +43,7 @@ interface AiState {
   checkLiveTelemetry: (
     pressureGrams: number,
     tremorHz: number,
+    isWriting?: boolean,
     onViolationHaptic?: () => void
   ) => AiViolationAlert | null;
   clearActiveViolation: () => void;
@@ -162,13 +163,14 @@ export const useAiStore = create<AiState>((set, get) => ({
   checkLiveTelemetry: (
     pressureGrams: number,
     tremorHz: number,
+    isWriting = false,
     onViolationHaptic?: () => void
   ) => {
-    const { activeProfile, activeViolation, violationCount } = get();
+    const { activeProfile, activeViolation } = get();
     const now = Date.now();
 
-    // Ignore tiny idle touches (<10g)
-    if (pressureGrams < 10) {
+    // Ignore tiny idle touches (<15g)
+    if (pressureGrams < 15) {
       if (activeViolation) {
         set({ activeViolation: null });
       }
@@ -177,7 +179,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
     let alert: AiViolationAlert | null = null;
 
-    // Check Upper Pinch Force Threshold (Hypertonic Cramp Prevention)
+    // 1. Check Upper Pinch Force Threshold (Always active to prevent fatigue and cramp)
     if (pressureGrams > activeProfile.maxSafePinchGrams) {
       alert = {
         type: 'HIGH_PINCH',
@@ -187,8 +189,9 @@ export const useAiStore = create<AiState>((set, get) => ({
         timestamp: now,
       };
     }
-    // Check Lower Pinch Force Threshold (Slip / Hypotonic Drop Prevention)
-    else if (pressureGrams < activeProfile.minSafePinchGrams && pressureGrams >= 25) {
+    // 2. Check Lower Pinch Force Threshold ONLY WHEN ACTIVELY INKING ON DIGITIZER
+    // This stops false alarms when the user is simply resting or hovering the pen
+    else if (isWriting && pressureGrams < activeProfile.minSafePinchGrams && pressureGrams >= 25) {
       alert = {
         type: 'LOW_PINCH',
         message: `Pinch grip loose (${Math.round(pressureGrams)}g). Minimum secure threshold is ${activeProfile.minSafePinchGrams}g`,
@@ -197,8 +200,8 @@ export const useAiStore = create<AiState>((set, get) => ({
         timestamp: now,
       };
     }
-    // Check Tremor Frequency Ceiling (Tremor Surge / Dysregulation)
-    else if (tremorHz > activeProfile.maxTremorCeilingHz && tremorHz > 2.0) {
+    // 3. Check Tremor Frequency Ceiling (Flags acute kinetic tremors above patient baseline)
+    else if (tremorHz > activeProfile.maxTremorCeilingHz && tremorHz > 3.0) {
       alert = {
         type: 'EXCESSIVE_TREMOR',
         message: `Tremor spike (${tremorHz.toFixed(1)}Hz) exceeds calibrated ceiling (${activeProfile.maxTremorCeilingHz}Hz)`,
@@ -208,17 +211,20 @@ export const useAiStore = create<AiState>((set, get) => ({
       };
     }
 
+    // Debounce state updates: only trigger state update if alert type changed or 1200ms elapsed
     if (alert) {
-      // Trigger haptic callback if crossing into new violation or sustained after 800ms
-      if (!activeViolation || activeViolation.type !== alert.type || (now - activeViolation.timestamp > 800)) {
+      const isNewType = !activeViolation || activeViolation.type !== alert.type;
+      const isSustainedInterval = activeViolation && (now - activeViolation.timestamp > 1200);
+
+      if (isNewType || isSustainedInterval) {
         if (onViolationHaptic) {
           onViolationHaptic();
         }
+        set((state) => ({
+          activeViolation: alert,
+          violationCount: isNewType ? state.violationCount + 1 : state.violationCount,
+        }));
       }
-      set({
-        activeViolation: alert,
-        violationCount: violationCount + 1,
-      });
     } else if (activeViolation) {
       set({ activeViolation: null });
     }
@@ -252,12 +258,17 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   updateCustomThresholds: (bounds) => {
     const { activeProfile } = get();
+    const newMin = bounds.minSafePinchGrams !== undefined ? bounds.minSafePinchGrams : activeProfile.minSafePinchGrams;
+    const rawMax = bounds.maxSafePinchGrams !== undefined ? bounds.maxSafePinchGrams : activeProfile.maxSafePinchGrams;
+    const newMax = Math.max(newMin + 40, rawMax);
+    const newTremor = bounds.maxTremorCeilingHz !== undefined ? bounds.maxTremorCeilingHz : activeProfile.maxTremorCeilingHz;
+
     const updated: PersonalizedThresholdProfile = {
       ...activeProfile,
-      minSafePinchGrams: bounds.minSafePinchGrams !== undefined ? bounds.minSafePinchGrams : activeProfile.minSafePinchGrams,
-      maxSafePinchGrams: bounds.maxSafePinchGrams !== undefined ? bounds.maxSafePinchGrams : activeProfile.maxSafePinchGrams,
-      maxTremorCeilingHz: bounds.maxTremorCeilingHz !== undefined ? bounds.maxTremorCeilingHz : activeProfile.maxTremorCeilingHz,
-      clinicalNotes: `Manual therapist override on ${new Date().toLocaleDateString()}. Bounds: [${bounds.minSafePinchGrams ?? activeProfile.minSafePinchGrams}g - ${bounds.maxSafePinchGrams ?? activeProfile.maxSafePinchGrams}g]`,
+      minSafePinchGrams: newMin,
+      maxSafePinchGrams: newMax,
+      maxTremorCeilingHz: newTremor,
+      clinicalNotes: `Manual therapist override on ${new Date().toLocaleDateString()}. Bounds: [${newMin}g - ${newMax}g], Tremor: <${newTremor}Hz`,
     };
     set({ activeProfile: updated });
   },

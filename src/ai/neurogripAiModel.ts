@@ -132,10 +132,16 @@ export class NeuroGripAiEngine {
     const maxAccel = accelerations.length > 0 ? Math.max(...accelerations.map(Math.abs)) : 0;
     const jerkMetric = jerks.length > 0 ? jerks.reduce((a, b) => a + b, 0) / jerks.length : 0;
 
-    const meanPinchForce = pressures.length > 0 ? pressures.reduce((a, b) => a + b, 0) / pressures.length : 160;
-    const pinchForceVariance = pressures.length > 0
-      ? Math.sqrt(pressures.reduce((acc, p) => acc + Math.pow(p - meanPinchForce, 2), 0) / pressures.length)
-      : 20;
+    // Filter active pinch pressures to prevent idle hovering (0g) from diluting the baseline
+    const activePressures = pressures.filter((p) => p >= 15);
+    const validPressures = activePressures.length >= 3 ? activePressures : (pressures.length > 0 ? pressures : [160]);
+
+    const meanPinchForce = validPressures.length > 0
+      ? validPressures.reduce((a, b) => a + b, 0) / validPressures.length
+      : 160;
+    const pinchForceVariance = validPressures.length > 1
+      ? Math.sqrt(validPressures.reduce((acc, p) => acc + Math.pow(p - meanPinchForce, 2), 0) / validPressures.length)
+      : 22;
 
     // Micrographia decay: Compare stroke size of the second half vs first half
     const half = Math.floor(points.length / 2);
@@ -310,20 +316,20 @@ export class NeuroGripAiEngine {
     const features = this.extractFeatures(points);
     const evaluation = this.evaluateMotorCondition(features);
 
-    // Compute individualized thresholds with conformal tolerance
-    const meanPinch = Math.max(80, features.meanPinchForce);
-    const stdPinch = Math.max(15, features.pinchForceVariance);
+    // Compute individualized thresholds with clinical conformal tolerance
+    const meanPinch = Math.max(120, Math.min(380, Math.round(features.meanPinchForce)));
+    const stdPinch = Math.max(15, Math.min(50, Math.round(features.pinchForceVariance)));
 
     // Personalized pinch boundaries:
-    // Safe lower bound: ~1.2 std below mean (prevents pen slipping)
-    // Safe upper bound: ~1.6 std above mean (warns before muscle cramping)
-    const minSafePinchGrams = Math.max(40, Math.round(meanPinch - 1.2 * stdPinch));
-    const maxSafePinchGrams = Math.min(480, Math.round(meanPinch + 1.6 * stdPinch));
+    // Safe lower bound: ~1.0 std below mean, strictly clamped between 50g and 160g
+    const minSafePinchGrams = Math.max(50, Math.min(160, Math.round(meanPinch - 1.0 * stdPinch)));
+    // Safe upper bound: ~1.5 std above mean, guaranteed to be at least minSafe + 80g (clamped to 480g)
+    const maxSafePinchGrams = Math.max(minSafePinchGrams + 80, Math.min(480, Math.round(meanPinch + 1.5 * stdPinch)));
 
     // Personalized tremor ceiling:
     // Allows patient's baseline tremor, but flags surges exceeding 1.4x baseline
-    const baselineTremorHz = features.dominantTremorHz;
-    const maxTremorCeilingHz = +(baselineTremorHz + 1.4).toFixed(1);
+    const baselineTremorHz = Math.max(2.8, Math.min(8.5, features.dominantTremorHz));
+    const maxTremorCeilingHz = +(Math.min(10.5, baselineTremorHz + 1.4)).toFixed(1);
 
     return {
       patientId,

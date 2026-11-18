@@ -22,6 +22,7 @@ import {
   TargetIcon,
   ShieldCheckIcon,
   CheckCircleIcon,
+  SlidersIcon,
 } from '../components/Icons';
 import { SpringButton } from '../components/SpringButton';
 import { PulseDot } from '../components/PulseDot';
@@ -38,7 +39,12 @@ export default function DeviceHubScreen() {
     triggerBuzzerHaptic,
     touchX,
     touchY,
+    pressure,
     pressureGrams,
+    fsrCalibration,
+    setFsrTareZero,
+    setFsrReferenceGrip,
+    resetFsrCalibration,
   } = useBleStore();
 
   const {
@@ -55,15 +61,21 @@ export default function DeviceHubScreen() {
     resetToDefaultProfile,
   } = useAiStore();
 
-  // Calibration loop countdown & continuous telemetry sampler
+  const countdownRef = useRef(30);
+
+  // Stable Calibration loop countdown & continuous telemetry sampler
   useEffect(() => {
     let timer: any = null;
     let streamTimer: any = null;
 
     if (isCalibrating) {
+      countdownRef.current = 30;
+      updateCalibrationCountdown(30);
+
       timer = setInterval(() => {
-        const nextSec = calibrationCountdown - 1;
-        if (nextSec <= 0) {
+        countdownRef.current -= 1;
+        const currentSec = countdownRef.current;
+        if (currentSec <= 0) {
           clearInterval(timer);
           clearInterval(streamTimer);
           const profile = finishCalibration();
@@ -73,14 +85,15 @@ export default function DeviceHubScreen() {
             [{ text: 'Apply Envelope' }]
           );
         } else {
-          updateCalibrationCountdown(nextSec);
+          updateCalibrationCountdown(currentSec);
         }
       }, 1000);
 
       streamTimer = setInterval(() => {
-        const liveGrams = pressureGrams || (isSimulated ? 175 + Math.sin(Date.now() / 250) * 35 : 160);
-        const ptX = touchX > 0 ? touchX : 120 + ((Date.now() / 20) % 240);
-        const ptY = touchY > 0 ? touchY : 140 + Math.sin(Date.now() / 250) * 60;
+        const { pressureGrams: curGrams, touchX: curX, touchY: curY, isSimulated: sim } = useBleStore.getState();
+        const liveGrams = curGrams > 0 ? curGrams : (sim ? 185 + Math.sin(Date.now() / 250) * 40 : 0);
+        const ptX = curX > 0 ? curX : 120 + ((Date.now() / 20) % 240);
+        const ptY = curY > 0 ? curY : 140 + Math.sin(Date.now() / 250) * 60;
         recordCalibrationPoint({
           x: ptX,
           y: ptY,
@@ -94,7 +107,25 @@ export default function DeviceHubScreen() {
       if (timer) clearInterval(timer);
       if (streamTimer) clearInterval(streamTimer);
     };
-  }, [isCalibrating, calibrationCountdown, pressureGrams, touchX, touchY, isSimulated]);
+  }, [isCalibrating, finishCalibration, recordCalibrationPoint, updateCalibrationCountdown]);
+
+  const handleTareZero = () => {
+    setFsrTareZero();
+    Alert.alert(
+      'FSR 402 Zero Tare Set',
+      `Resting sensor baseline calibrated to ${pressure} ADC.\n\nNow hold the pen with a normal writing grip and tap "Calibrate Grip".`,
+      [{ text: 'OK' }]
+    );
+  };
+
+  const handleCalibrateGrip = () => {
+    setFsrReferenceGrip(undefined, 250);
+    Alert.alert(
+      'FSR 402 Pinch Calibrated',
+      `Reference hold calibrated: ${pressure} ADC mapped to 250g standard ergonomic pinch force.\n\nNon-linear conductance curve applied across 0-600g range.`,
+      [{ text: 'OK' }]
+    );
+  };
 
   const handleManualComplete = () => {
     const profile = finishCalibration();
@@ -308,6 +339,104 @@ export default function DeviceHubScreen() {
           <SparklesIcon size={16} color={colors.warning} />
           <Text style={[styles.hapticTestBtnText, { color: colors.warning }]}>Test Pen Buzzer & Haptics</Text>
         </SpringButton>
+      </View>
+
+      {/* FSR 402 Force Sensor Calibration Card */}
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.cardHeader}>
+          <View style={styles.cardTitleRow}>
+            <View style={[styles.iconBox, { backgroundColor: 'rgba(245, 158, 11, 0.12)' }]}>
+              <SlidersIcon size={20} color={colors.warning} />
+            </View>
+            <View>
+              <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>FSR 402 Force Sensor Calibration</Text>
+              <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>Zero-Tare Offset & Non-Linear Pinch Curve</Text>
+            </View>
+          </View>
+          <View
+            style={[
+              styles.badge,
+              {
+                backgroundColor: fsrCalibration.isCalibrated ? 'rgba(16, 185, 129, 0.14)' : colors.surfaceElevated,
+                borderColor: fsrCalibration.isCalibrated ? Colors.success : colors.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.badgeText,
+                { color: fsrCalibration.isCalibrated ? Colors.success : colors.textMuted },
+              ]}
+            >
+              {fsrCalibration.isCalibrated ? 'CALIBRATED' : 'DEFAULT'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Live ADC & Calibrated Force Readouts */}
+        <View style={[styles.envelopeMetricsGrid, { backgroundColor: colors.surfaceElevated }]}>
+          <View style={styles.envelopeCol}>
+            <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>RAW FSR ADC</Text>
+            <Text style={[styles.envelopeVal, { color: colors.textPrimary }]}>{pressure} / 1023</Text>
+          </View>
+          <View style={styles.envelopeCol}>
+            <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>CALIBRATED LOAD</Text>
+            <Text style={[styles.envelopeVal, { color: colors.primary }]}>{pressureGrams} g</Text>
+          </View>
+          <View style={styles.envelopeCol}>
+            <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>TARE ZERO</Text>
+            <Text style={[styles.envelopeVal, { color: colors.accent }]}>{fsrCalibration.adcZero} ADC (0g)</Text>
+          </View>
+          <View style={styles.envelopeCol}>
+            <Text style={[styles.envelopeLabel, { color: colors.textMuted }]}>REF SCALE</Text>
+            <Text style={[styles.envelopeVal, { color: colors.success }]}>{fsrCalibration.adcReference} ADC (250g)</Text>
+          </View>
+        </View>
+
+        {/* Real-time FSR Force Bar */}
+        <View style={[styles.calibProgressBarTrack, { backgroundColor: colors.border }]}>
+          <View
+            style={[
+              styles.calibProgressBarFill,
+              {
+                width: `${Math.min(100, Math.max(3, (pressureGrams / 550) * 100))}%`,
+                backgroundColor: pressureGrams > 350 ? Colors.danger : colors.primary,
+              },
+            ]}
+          />
+        </View>
+
+        <Text style={[styles.clinicalNoteText, { color: colors.textSecondary }]}>
+          1. Hold pen in air and tap <Text style={{ fontWeight: '800', color: colors.textPrimary }}>Tare Zero</Text> to zero resting offset.{'\n'}
+          2. Pinch the grip with your comfortable writing force and tap <Text style={{ fontWeight: '800', color: colors.textPrimary }}>Calibrate Grip</Text>.
+        </Text>
+
+        <View style={styles.calibBtnRow}>
+          <SpringButton
+            style={[styles.calibFinishBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border, borderWidth: 1 }]}
+            onPress={handleTareZero}
+          >
+            <TargetIcon size={14} color={colors.warning} />
+            <Text style={[styles.calibFinishBtnText, { color: colors.textPrimary }]}>1. Tare Zero (0g)</Text>
+          </SpringButton>
+
+          <SpringButton
+            style={[styles.calibFinishBtn, { backgroundColor: colors.primary }]}
+            onPress={handleCalibrateGrip}
+          >
+            <SparklesIcon size={14} color={colors.isDark ? '#080C14' : '#FFFFFF'} />
+            <Text style={[styles.calibFinishBtnText, { color: colors.isDark ? '#080C14' : '#FFFFFF' }]}>2. Calibrate Grip</Text>
+          </SpringButton>
+
+          {fsrCalibration.isCalibrated && (
+            <SpringButton
+              style={[styles.resetCalibBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+              onPress={resetFsrCalibration}
+            >
+              <RefreshIcon size={14} color={colors.textSecondary} />
+            </SpringButton>
+          )}
+        </View>
       </View>
 
       {/* AI Personalized Threshold Calibration Card */}
