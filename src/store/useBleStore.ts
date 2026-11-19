@@ -30,33 +30,10 @@ export interface FsrCalibration {
   isCalibrated: boolean;
 }
 
-export function convertFsrAdcToGrams(rawAdc: number, calib: FsrCalibration): number {
-  if (!calib) return 0;
-  
-  // Auto-detect 12-bit (0-4095) vs 10-bit (0-1023) ADC architecture
-  const is12Bit = rawAdc > 1023 || (calib.adcReference && calib.adcReference > 1023);
-  const effectiveZero = calib.adcZero ?? (is12Bit ? 90 : 25);
-
-  if (rawAdc <= effectiveZero + (is12Bit ? 20 : 6)) {
-    return 0; // Filter resting sensor noise floor
-  }
-
-  const effective = rawAdc - effectiveZero;
-  
-  // If calib.adcReference was set with 10-bit (<=1023) but live signal is 12-bit, adapt reference dynamically
-  let nominalRef = calib.adcReference || (is12Bit ? 2600 : 450);
-  if (is12Bit && nominalRef <= 1023) {
-    nominalRef = Math.round(nominalRef * (4095 / 1023));
-  }
-
-  const refEffective = Math.max(30, nominalRef - effectiveZero);
-  const ratio = Math.max(0, effective / refEffective);
-
-  // Non-linear FSR 402 conductance power-law curve: F ~ (G)^gamma
-  const exponent = calib.exponent || 0.88;
-  const refGrams = calib.referenceGrams || 250;
-  const grams = Math.round(refGrams * Math.pow(ratio, exponent));
-  return Math.max(0, Math.min(850, grams));
+export function convertFsrAdcToGrams(rawAdc: number, calib?: FsrCalibration): number {
+  if (rawAdc <= 0) return 0;
+  // Unified exact mathematical mapping matching Smart Pen firmware OLED display
+  return Math.max(0, Math.min(850, Math.round((rawAdc * 650) / 1800)));
 }
 
 export function convertGramsToFsrAdc(grams: number, calib: FsrCalibration): number {
@@ -502,10 +479,17 @@ export const useBleStore = create<BleState>((set, get) => ({
                   const x = parseInt(parts[0].slice(2), 10) || 0;
                   const y = parseInt(parts[1].slice(2), 10) || 0;
                   const p = parseInt(parts[2].slice(2), 10) || 0;
-                  const t = parseInt(parts[3].slice(2), 10) || 0;
+                  let g = 0;
+                  let t = 0;
+                  for (let i = 3; i < parts.length; i++) {
+                    if (parts[i].startsWith('G:')) g = parseInt(parts[i].slice(2), 10) || 0;
+                    else if (parts[i].startsWith('T:')) t = parseInt(parts[i].slice(2), 10) || 0;
+                  }
+                  if (!g && p > 0) {
+                    g = Math.round((p * 650) / 1800);
+                  }
+                  const grams = g;
                   const isDown = x > 0 && y > 0;
-
-                  const grams = convertFsrAdcToGrams(p, get().fsrCalibration);
                   const isTriggered = grams > 420 || t > 6000;
 
                   set((state) => {
@@ -570,17 +554,19 @@ export const useBleStore = create<BleState>((set, get) => ({
                 }
               }
 
-              // 2. Direct Pen packet: P:(\d+),T:(\d+) or Grip=(\d+)|Tremor=([\d.]+)
-              const match = raw.match(/P:(\d+),T:(\d+)/);
+              // 2. Direct Pen packet: P:(\d+)(?:,G:(\d+))?,T:(\d+) or Grip=(\d+)|Tremor=([\d.]+)
+              const match = raw.match(/P:(\d+)(?:,G:(\d+))?,T:(\d+)/);
               const gripMatch = raw.match(/Grip=(\d+).*?Tremor=([\d.]+)/i);
 
               if (match || gripMatch) {
                 const currentPressure = match ? parseInt(match[1], 10) : parseInt(gripMatch![1], 10);
                 const currentTremor = match
-                  ? parseInt(match[2], 10)
+                  ? parseInt(match[3] || match[2] || '0', 10)
                   : Math.round(parseFloat(gripMatch![2]) * 1000);
 
-                const grams = convertFsrAdcToGrams(currentPressure, get().fsrCalibration);
+                const grams = (match && match[2])
+                  ? parseInt(match[2], 10)
+                  : convertFsrAdcToGrams(currentPressure);
                 const isTriggered = grams > 420 || currentTremor > 6000;
 
                 set((state) => {

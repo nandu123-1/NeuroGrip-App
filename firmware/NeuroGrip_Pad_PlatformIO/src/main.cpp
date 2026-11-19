@@ -72,6 +72,7 @@ static BLERemoteCharacteristic* pPenCmdChar = nullptr;
 // Shared Telemetry & Display Mode State
 // -------------------------------------------------------------
 volatile int penPressure = 0;
+volatile int penGrams = 0;
 volatile int penTremor = 0;
 bool penConnected = false;
 
@@ -137,6 +138,12 @@ static void gripNotifyCallback(BLERemoteCharacteristic* pChar, uint8_t* pData, s
     penPressure = atoi(pStr + 2);
   } else {
     penPressure = atoi(buf);
+  }
+  char* gStr = strstr(buf, "G:");
+  if (gStr) {
+    penGrams = atoi(gStr + 2);
+  } else {
+    penGrams = (penPressure * 650) / 1800;
   }
   char* tStr = strstr(buf, "T:");
   if (tStr) {
@@ -218,11 +225,39 @@ bool connectToPen() {
 
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (connectedToPen) return;
+    if (connectedToPen || doConnect) return;
 
-    if (advertisedDevice.getName() == "NeuroGrip" || 
-        advertisedDevice.getAddress().equals(penTargetAddress)) {
-      Serial.println("[HUB BLE] Found NeuroGrip Pen! Initiating pairing...");
+    std::string devName = advertisedDevice.getName();
+    bool isMatch = false;
+
+    // 1. Check Name
+    if (!devName.empty()) {
+      if (devName == "NeuroGrip_Pen" || 
+          devName == "NeuroGrip" ||
+          devName.find("NeuroGrip") != std::string::npos ||
+          devName.find("SmartPen") != std::string::npos) {
+        // Exclude the Pad Hub itself!
+        if (devName.find("Hub") == std::string::npos) {
+          isMatch = true;
+        }
+      }
+    }
+
+    // 2. Check Pen Service UUID (19B10000-E8F2-537E-4F6C-D104768A1214)
+    if (!isMatch && advertisedDevice.haveServiceUUID()) {
+      if (advertisedDevice.isAdvertisingService(penServiceUUID)) {
+        isMatch = true;
+      }
+    }
+
+    // 3. Fallback to Target Address if configured
+    if (!isMatch && advertisedDevice.getAddress().equals(penTargetAddress)) {
+      isMatch = true;
+    }
+
+    if (isMatch) {
+      Serial.printf("[HUB BLE] Found NeuroGrip Pen: '%s' [%s]! Initiating pairing...\n",
+                    devName.c_str(), advertisedDevice.getAddress().toString().c_str());
       BLEDevice::getScan()->stop();
       if (myPenDevice != nullptr) delete myPenDevice;
       myPenDevice = new BLEAdvertisedDevice(advertisedDevice);
@@ -738,11 +773,12 @@ void loop() {
       lastSentP = penPressure;
       wasDownLastFrame = isDown;
 
-      char packet[48];
-      snprintf(packet, sizeof(packet), "X:%d,Y:%d,P:%d,T:%d",
+      char packet[64];
+      snprintf(packet, sizeof(packet), "X:%d,Y:%d,P:%d,G:%d,T:%d",
                isDown ? touchX : 0,
                isDown ? touchY : 0,
                penPressure,
+               penGrams,
                penTremor);
 
       pDataCharacteristic->setValue((uint8_t*)packet, strlen(packet));

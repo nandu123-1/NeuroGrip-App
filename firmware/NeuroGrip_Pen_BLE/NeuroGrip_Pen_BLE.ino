@@ -393,10 +393,8 @@ void setup() {
   Wire.begin();
   Wire.setClock(400000);
 
-  // Set ADC Resolution to 12-bit (0 - 4095)
-  #if defined(ADC_RESOLUTION)
+  // Set ADC Resolution unconditionally to 12-bit (0 - 4095)
   analogReadResolution(12);
-  #endif
 
   // Configure FSR pin
   pinMode(PIN_FSR, INPUT_PULLDOWN);
@@ -507,8 +505,9 @@ void loop() {
     if (now - lastBleSendTime >= BLE_SEND_INTERVAL_MS) {
       lastBleSendTime = now;
 
-      char buffer[32];
-      snprintf(buffer, sizeof(buffer), "P:%d,T:%d", filteredNetFSR, tremorMagnitude);
+      int displayG = netAdcToGrams(filteredNetFSR);
+      char buffer[48];
+      snprintf(buffer, sizeof(buffer), "P:%d,G:%d,T:%d", filteredNetFSR, displayG, tremorMagnitude);
       dataChar.writeValue(buffer);
     }
   }
