@@ -1,6 +1,6 @@
 /*
  * =====================================================================
- * NEUROGRIP SMART PEN - HIGH-PERFORMANCE FIRMWARE
+ * NEUROGRIP SMART PEN - HIGH-PERFORMANCE FIRMWARE (AUTO-TARE EDITION)
  * Board: Seeed Studio XIAO nRF52840 Sense
  * Peripherals:
  *   - Interlink FSR 402 on Analog Pin A0 (12-bit ADC: 0 - 4095)
@@ -8,14 +8,16 @@
  *   - SSD1306 0.96" OLED Display on I2C (SDA=D4, SCL=D5) @ 0x3C
  *   - WS2812B 8-LED NeoPixel Ring on Digital Pin D1
  *   - Onboard Multi-Color RGB LED (Pins 12, 13, 14)
- *   - Tactile Haptic / Piezo Buzzer on D2 (mirrored to D0)
+ *   - Tactile Haptic / Piezo Buzzer on D2
  * BLE Protocol:
  *   - Device Name: "NeuroGrip_Pen"
  *   - Service UUID: 19B10000-E8F2-537E-4F6C-D104768A1214
- *   - Data Char (Notify): 19B10001-E8F2-537E-4F6C-D104768A1214 (P:<fsr>,T:<tremor>)
- *   - Cmd Char (Write):   19B10002-E8F2-537E-4F6C-D104768A1214 (CMD:THRESH:<min>,<max>)
+ *   - Data Char (Notify): 19B10001-E8F2-537E-4F6C-D104768A1214 (P:<netFsr>,T:<tremor>)
+ *   - Cmd Char (Write):   19B10002-E8F2-537E-4F6C-D104768A1214 (CMD:THRESH, CMD:TARE)
  *
  * Performance Architecture:
+ *   - Dynamic Auto-Tare baseline calibration on boot (zero force = 0g when untouched)
+ *   - Software noise gate eliminating resting pre-load and enclosure clamping drift
  *   - Non-blocking multi-rate scheduler (Sensor: 50Hz, BLE: 25Hz, OLED: 10Hz, RGB: 20Hz)
  *   - Zero blocking delay() calls; non-blocking millis() haptic timing
  *   - Continuous BLE.poll() for zero-latency bidirectional transmission
@@ -31,8 +33,7 @@
 
 // Hardware Pin Definitions
 #define PIN_FSR           A0
-#define PIN_BUZZER_PRIMARY D2
-#define PIN_BUZZER_AUX     D0
+#define PIN_BUZZER        D2  // Strictly D2 (prevents conflict with A0/D0)
 #define PIN_NEOPIXEL      D1
 #define NUM_PIXELS        8
 
@@ -61,16 +62,24 @@ BLEStringCharacteristic cmdChar(BLE_CMD_CHAR_UUID, BLEWrite, 32);
 
 // Filter & Sensor Variables
 int rawFSR = 0;
-int filteredFSR = 0;
+int restingTareBaseline = 2240; // Auto-calibrated on boot
+int filteredNetFSR = 0;        // Net force above resting baseline (strictly 0 when untouched)
+
 int16_t ax = 0, ay = 0, az = 0;
 int16_t gx = 0, gy = 0, gz = 0;
 int prevAx = 0, prevAy = 0, prevAz = 0;
 int tremorMagnitude = 0;
-const int TREMOR_ALERT_THRESHOLD = 5000;
 
-// Dynamic Personalized Threshold Limits (Configurable via BLE from companion app)
-int minPinchAdcThreshold = 800;   // Default lower pinch limit (~100g in 12-bit)
-int maxPinchAdcThreshold = 3400;  // Default upper safe pinch limit (~480g in 12-bit)
+// Dynamic Personalized Threshold Limits (in Grams and Net Active ADC units above Tare)
+int minGramsThreshold = 120;      // Personalized safe lower limit (120g)
+int maxGramsThreshold = 200;      // Personalized safe upper limit (200g)
+int minPinchAdcThreshold = 332;   // Net active pinch lower limit (120g mapped to ~332 ADC)
+int maxPinchAdcThreshold = 554;   // Net active safe pinch upper limit (200g mapped to ~554 ADC)
+
+inline int netAdcToGrams(int netAdc) {
+  if (netAdc <= 0) return 0;
+  return (int)map(constrain(netAdc, 0, 1800), 0, 1800, 0, 650);
+}
 
 // Non-blocking Timing Variables
 unsigned long now = 0;
@@ -95,15 +104,13 @@ const unsigned long HAPTIC_COOLDOWN_MS = 750;
 uint8_t animPhase = 0;
 
 void triggerBuzzerNonBlocking(int durationMs) {
-  digitalWrite(PIN_BUZZER_PRIMARY, HIGH);
-  digitalWrite(PIN_BUZZER_AUX, HIGH);
+  digitalWrite(PIN_BUZZER, HIGH);
   buzzerOffTime = millis() + durationMs;
 }
 
 void updateBuzzerState() {
   if (buzzerOffTime > 0 && millis() >= buzzerOffTime) {
-    digitalWrite(PIN_BUZZER_PRIMARY, LOW);
-    digitalWrite(PIN_BUZZER_AUX, LOW);
+    digitalWrite(PIN_BUZZER, LOW);
     buzzerOffTime = 0;
   }
 }
@@ -113,6 +120,18 @@ void setOnboardRGB(bool r, bool g, bool b) {
   digitalWrite(LEDR, r ? LOW : HIGH);
   digitalWrite(LEDG, g ? LOW : HIGH);
   digitalWrite(LEDB, b ? LOW : HIGH);
+}
+
+void calibrateAutoTare() {
+  long sum = 0;
+  const int TARE_SAMPLES = 40;
+  for (int i = 0; i < TARE_SAMPLES; i++) {
+    sum += analogRead(PIN_FSR);
+    delay(10);
+  }
+  restingTareBaseline = sum / TARE_SAMPLES;
+  Serial.print("[OK] Auto-Tare Baseline Established: ");
+  Serial.println(restingTareBaseline);
 }
 
 void setupMPU6050() {
@@ -183,11 +202,7 @@ void updateOLED(bool bleConnected) {
   display.setCursor(2, 16);
   display.print("GRIP: ");
 
-  // Simple approx grams for on-screen read (assuming calibrated curve)
-  int displayGrams = 0;
-  if (filteredFSR > 200) {
-    displayGrams = (int)map(filteredFSR, 200, 4000, 20, 600);
-  }
+  int displayGrams = netAdcToGrams(filteredNetFSR);
   display.setTextSize(2);
   display.setCursor(38, 14);
   display.print(displayGrams);
@@ -196,38 +211,39 @@ void updateOLED(bool bleConnected) {
 
   display.setCursor(96, 16);
   display.print("(");
-  display.print(filteredFSR);
+  display.print(filteredNetFSR);
   display.print(")");
 
   // 3. Dynamic Progress / Envelope Bar
   display.drawRect(2, 32, 124, 9, SSD1306_WHITE);
 
-  // Fill current force
-  int fillWidth = map(constrain(filteredFSR, 0, 4095), 0, 4095, 0, 120);
+  // Fill current force relative to max scale (650g)
+  int fillWidth = map(constrain(displayGrams, 0, 650), 0, 650, 0, 120);
   if (fillWidth > 0) {
     display.fillRect(4, 34, fillWidth, 5, SSD1306_WHITE);
   }
 
-  // Draw personalized safe window tick marks
-  int minTick = map(constrain(minPinchAdcThreshold, 0, 4095), 0, 4095, 2, 124);
-  int maxTick = map(constrain(maxPinchAdcThreshold, 0, 4095), 0, 4095, 2, 124);
+  // Draw personalized safe window tick marks in grams
+  int minTick = map(constrain(minGramsThreshold, 0, 650), 0, 650, 4, 120);
+  int maxTick = map(constrain(maxGramsThreshold, 0, 650), 0, 650, 4, 120);
   display.drawLine(minTick, 30, minTick, 42, SSD1306_WHITE);
   display.drawLine(maxTick, 30, maxTick, 42, SSD1306_WHITE);
 
-  // 4. Personalized Limits Display
+  // 4. Personalized Limits Display in GRAMS!
   display.setCursor(2, 44);
-  display.print("ENVELOPE: ");
-  display.print(minPinchAdcThreshold);
-  display.print("-");
-  display.print(maxPinchAdcThreshold);
+  display.print("ZONE: ");
+  display.print(minGramsThreshold);
+  display.print(" - ");
+  display.print(maxGramsThreshold);
+  display.print(" g");
 
   // 5. Biofeedback Status Line
   display.setCursor(2, 55);
-  if (filteredFSR > maxPinchAdcThreshold) {
+  if (displayGrams > maxGramsThreshold) {
     display.print("STATUS: ! OVERGRIP !");
-  } else if (filteredFSR >= minPinchAdcThreshold) {
+  } else if (displayGrams >= minGramsThreshold) {
     display.print("STATUS: OPTIMAL ZONE");
-  } else if (filteredFSR > 200) {
+  } else if (displayGrams > 0) {
     display.print("STATUS: LIGHT TOUCH");
   } else {
     display.print("STATUS: RESTING (0g)");
@@ -251,8 +267,10 @@ void updateRGB(bool bleConnected) {
     return;
   }
 
+  int displayGrams = netAdcToGrams(filteredNetFSR);
+
   // BLE Connected Biofeedback States:
-  if (filteredFSR > maxPinchAdcThreshold) {
+  if (displayGrams > maxGramsThreshold) {
     // Excessive Pinch Force (> maxThreshold): Rapid pulsing Crimson Red Alert!
     uint8_t rVal = (animPhase % 64 < 32) ? 255 : 40;
     for (int i = 0; i < NUM_PIXELS; i++) {
@@ -260,25 +278,25 @@ void updateRGB(bool bleConnected) {
     }
     ring.show();
     setOnboardRGB(true, false, false); // Bright Red
-  } else if (filteredFSR >= minPinchAdcThreshold) {
-    // Optimal Ergonomic Pinch Zone: Vibrant Solid Emerald Green
+  } else if (displayGrams >= minGramsThreshold) {
+    // Optimal Ergonomic Pinch Zone: Vibrant Solid Emerald Green (#00DC1E)
     // Gives patient clear positive reinforcement!
     for (int i = 0; i < NUM_PIXELS; i++) {
       ring.setPixelColor(i, ring.Color(0, 220, 30));
     }
     ring.show();
     setOnboardRGB(false, true, false); // Green
-  } else if (filteredFSR > (minPinchAdcThreshold / 2)) {
-    // Light contact / approaching safe zone: Soft Cyan / Amber
+  } else if (displayGrams > 0) {
+    // Light contact / approaching safe zone: Soft Cyan
     for (int i = 0; i < NUM_PIXELS; i++) {
       ring.setPixelColor(i, ring.Color(10, 80, 120));
     }
     ring.show();
     setOnboardRGB(false, true, true); // Cyan
   } else {
-    // Resting (Pen idle or lifted): Soft dim teal
+    // Resting (Pen idle or untouched): Soft dim teal / almost off
     for (int i = 0; i < NUM_PIXELS; i++) {
-      ring.setPixelColor(i, ring.Color(0, 15, 20));
+      ring.setPixelColor(i, ring.Color(0, 10, 15));
     }
     ring.show();
     setOnboardRGB(false, false, false); // Off
@@ -294,6 +312,27 @@ void handleIncomingBleCommands() {
     if (cmd.startsWith("BUZZ:")) {
       int dur = cmd.substring(5).toInt();
       triggerBuzzerNonBlocking(dur > 0 ? dur : 100);
+    } else if (cmd.startsWith("CMD:TARE") || cmd.startsWith("CMD:ZERO") || cmd.startsWith("TARE")) {
+      // Re-tare baseline live on user demand
+      calibrateAutoTare();
+      triggerBuzzerNonBlocking(90);
+    } else if (cmd.startsWith("CMD:GRAMS:")) {
+      String valStr = cmd.substring(10);
+      int commaIdx = valStr.indexOf(',');
+      if (commaIdx > 0) {
+        int newMin = valStr.substring(0, commaIdx).toInt();
+        int newMax = valStr.substring(commaIdx + 1).toInt();
+        if (newMin >= 0) minGramsThreshold = newMin;
+        if (newMax > newMin) maxGramsThreshold = newMax;
+        minPinchAdcThreshold = (minGramsThreshold * 1800) / 650;
+        maxPinchAdcThreshold = (maxGramsThreshold * 1800) / 650;
+      }
+      triggerBuzzerNonBlocking(60);
+      Serial.print("[OK] Personalized Limits (Grams): Min=");
+      Serial.print(minGramsThreshold);
+      Serial.print("g, Max=");
+      Serial.print(maxGramsThreshold);
+      Serial.println("g");
     } else if (cmd.startsWith("CMD:THRESH:") || cmd.startsWith("SET:LIMIT:")) {
       int colonIdx = cmd.lastIndexOf(':');
       String valStr = cmd.substring(colonIdx + 1);
@@ -301,18 +340,38 @@ void handleIncomingBleCommands() {
       if (commaIdx > 0) {
         int newMin = valStr.substring(0, commaIdx).toInt();
         int newMax = valStr.substring(commaIdx + 1).toInt();
-        if (newMin >= 0) minPinchAdcThreshold = newMin;
-        if (newMax > 300) maxPinchAdcThreshold = newMax;
+        if (newMax <= 850) {
+          // Explicit grams!
+          if (newMin >= 0) minGramsThreshold = newMin;
+          if (newMax > newMin) maxGramsThreshold = newMax;
+          minPinchAdcThreshold = (minGramsThreshold * 1800) / 650;
+          maxPinchAdcThreshold = (maxGramsThreshold * 1800) / 650;
+        } else {
+          // ADC units
+          if (newMin > restingTareBaseline) newMin -= restingTareBaseline;
+          if (newMax > restingTareBaseline) newMax -= restingTareBaseline;
+          minPinchAdcThreshold = constrain(newMin, 20, 1600);
+          maxPinchAdcThreshold = constrain(newMax, minPinchAdcThreshold + 50, 1800);
+          minGramsThreshold = (minPinchAdcThreshold * 650) / 1800;
+          maxGramsThreshold = (maxPinchAdcThreshold * 650) / 1800;
+        }
       } else {
         int newMax = valStr.toInt();
-        if (newMax > 300) maxPinchAdcThreshold = newMax;
+        if (newMax <= 850) {
+          maxGramsThreshold = newMax;
+          maxPinchAdcThreshold = (maxGramsThreshold * 1800) / 650;
+        } else {
+          if (newMax > restingTareBaseline) newMax -= restingTareBaseline;
+          maxPinchAdcThreshold = constrain(newMax, 100, 1800);
+          maxGramsThreshold = (maxPinchAdcThreshold * 650) / 1800;
+        }
       }
-      // Haptic confirmation chirp
       triggerBuzzerNonBlocking(60);
-      Serial.print("[OK] Personalized Limits Synced: Min=");
-      Serial.print(minPinchAdcThreshold);
-      Serial.print(", Max=");
-      Serial.println(maxPinchAdcThreshold);
+      Serial.print("[OK] Personalized Limits Synced: ");
+      Serial.print(minGramsThreshold);
+      Serial.print("g - ");
+      Serial.print(maxGramsThreshold);
+      Serial.println("g");
     }
   }
 }
@@ -320,11 +379,9 @@ void handleIncomingBleCommands() {
 void setup() {
   Serial.begin(115200);
 
-  // Buzzer outputs
-  pinMode(PIN_BUZZER_PRIMARY, OUTPUT);
-  pinMode(PIN_BUZZER_AUX, OUTPUT);
-  digitalWrite(PIN_BUZZER_PRIMARY, LOW);
-  digitalWrite(PIN_BUZZER_AUX, LOW);
+  // Buzzer output on D2
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
 
   // Onboard RGB outputs
   pinMode(LEDR, OUTPUT);
@@ -335,6 +392,14 @@ void setup() {
   // Initialize Fast 400kHz I2C Bus
   Wire.begin();
   Wire.setClock(400000);
+
+  // Set ADC Resolution to 12-bit (0 - 4095)
+  #if defined(ADC_RESOLUTION)
+  analogReadResolution(12);
+  #endif
+
+  // Configure FSR pin
+  pinMode(PIN_FSR, INPUT_PULLDOWN);
 
   // Initialize WS2812B RGB Ring
   ring.begin();
@@ -350,25 +415,30 @@ void setup() {
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
+    display.setCursor(16, 8);
+    display.println("NEUROGRIP PEN");
+    display.setCursor(14, 24);
+    display.println("TARE CALIBRATING...");
+    display.display();
+    Serial.println("[OK] SSD1306 OLED initialized @ 0x3C");
+  }
+
+  // Perform dynamic baseline auto-tare (establishes zero force resting level)
+  calibrateAutoTare();
+
+  if (oledAvailable) {
+    display.clearDisplay();
     display.setCursor(16, 12);
     display.println("NEUROGRIP PEN");
     display.setCursor(20, 28);
-    display.println("SYSTEM READY");
+    display.println("TARE COMPLETE");
     display.setCursor(14, 44);
-    display.println("FAST 25Hz BLE");
+    display.println("READY & ZEROED");
     display.display();
-    Serial.println("[OK] SSD1306 OLED initialized @ 0x3C");
-  } else {
-    Serial.println("[WARN] SSD1306 OLED not detected @ 0x3C");
   }
 
   // Initialize MPU-6050 IMU
   setupMPU6050();
-
-  // Set ADC Resolution to 12-bit (0 - 4095)
-  #if defined(ADC_RESOLUTION)
-  analogReadResolution(12);
-  #endif
 
   // Initialize BLE Stack
   if (!BLE.begin()) {
@@ -408,15 +478,20 @@ void loop() {
   if (now - lastSensorSampleTime >= SENSOR_INTERVAL_MS) {
     lastSensorSampleTime = now;
 
-    // Read FSR and smooth with EWMA filter (alpha = 0.25)
+    // Read FSR and subtract resting baseline with noise gate
     rawFSR = analogRead(PIN_FSR);
-    filteredFSR = (filteredFSR * 3 + rawFSR) / 4;
+    int delta = rawFSR - restingTareBaseline;
+    int netInstant = (delta > 70) ? delta : 0; // Solid noise gate: strictly 0 when untouched!
+
+    // Smooth with EWMA filter (alpha = 0.25)
+    filteredNetFSR = (filteredNetFSR * 3 + netInstant) / 4;
 
     // Read MPU-6050 IMU
     readMPU6050();
 
-    // Local Real-Time Haptic Biofeedback on Overgrip (> maxPinchAdcThreshold)
-    if (filteredFSR > maxPinchAdcThreshold) {
+    // Local Real-Time Haptic Biofeedback on Overgrip (> maxGramsThreshold)
+    int currentGrams = netAdcToGrams(filteredNetFSR);
+    if (currentGrams > maxGramsThreshold || filteredNetFSR > maxPinchAdcThreshold) {
       if (now - lastHapticAlertTime >= HAPTIC_COOLDOWN_MS) {
         lastHapticAlertTime = now;
         triggerBuzzerNonBlocking(55); // Crisp 55ms haptic pulse
@@ -433,7 +508,7 @@ void loop() {
       lastBleSendTime = now;
 
       char buffer[32];
-      snprintf(buffer, sizeof(buffer), "P:%d,T:%d", filteredFSR, tremorMagnitude);
+      snprintf(buffer, sizeof(buffer), "P:%d,T:%d", filteredNetFSR, tremorMagnitude);
       dataChar.writeValue(buffer);
     }
   }

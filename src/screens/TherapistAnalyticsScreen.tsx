@@ -58,9 +58,10 @@ export default function TherapistAnalyticsScreen() {
       maxSafePinchGrams: maxSafePinch,
       maxTremorCeilingHz: maxTremorCeiling,
     });
+    useBleStore.getState().syncPersonalizedLimitsToPen(minSafePinch, maxSafePinch);
     Alert.alert(
       'Personalized Thresholds Deployed',
-      `Hardware & Biofeedback updated:\n\n• Pinch Safe Range: ${minSafePinch}g - ${maxSafePinch}g\n• Tremor Ceiling: < ${maxTremorCeiling} Hz\n\nReal-time stylus haptics will trigger if patient exceeds these bounds.`,
+      `Hardware & Biofeedback updated:\n\n• Pinch Safe Range: ${minSafePinch}g - ${maxSafePinch}g\n• Tremor Ceiling: < ${maxTremorCeiling} Hz\n\nReal-time stylus haptics and Pen OLED zone updated.`,
       [{ text: 'OK' }]
     );
   };

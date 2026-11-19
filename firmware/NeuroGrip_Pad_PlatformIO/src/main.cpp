@@ -279,8 +279,14 @@ class CmdCallbacks : public BLECharacteristicCallbacks {
         }
       }
 
-      // Forward threshold or buzzer commands to the Smart Pen if bridged
-      if (rxVal.find("CMD:THRESH:") != std::string::npos || rxVal.find("BUZZ:") != std::string::npos || rxVal.find("SET:LIMIT:") != std::string::npos) {
+      // Forward threshold, tare, or buzzer commands to the Smart Pen if bridged
+      if (rxVal.find("CMD:GRAMS:") != std::string::npos ||
+          rxVal.find("CMD:THRESH:") != std::string::npos ||
+          rxVal.find("CMD:TARE") != std::string::npos ||
+          rxVal.find("CMD:ZERO") != std::string::npos ||
+          rxVal.find("TARE") != std::string::npos ||
+          rxVal.find("BUZZ:") != std::string::npos ||
+          rxVal.find("SET:LIMIT:") != std::string::npos) {
         if (connectedToPen && pPenCmdChar != nullptr) {
           pPenCmdChar->writeValue((uint8_t*)rxVal.c_str(), rxVal.length());
           Serial.printf("[HUB BLE Bridge] Forwarded to Pen: %s\n", rxVal.c_str());

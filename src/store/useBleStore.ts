@@ -147,11 +147,11 @@ export const useBleStore = create<BleState>((set, get) => ({
   isSimulated: false,
 
   fsrCalibration: {
-    adcZero: 90,
-    adcReference: 2600,
+    adcZero: 0,
+    adcReference: 700,
     referenceGrams: 250,
     exponent: 0.88,
-    isCalibrated: false,
+    isCalibrated: true,
   },
 
   setFsrTareZero: (zeroAdc?: number) => {
@@ -159,11 +159,13 @@ export const useBleStore = create<BleState>((set, get) => ({
     set((state) => ({
       fsrCalibration: {
         ...state.fsrCalibration,
-        adcZero: Math.max(0, Math.min(1500, live)),
+        adcZero: Math.max(0, Math.min(200, live)),
         isCalibrated: true,
       },
       pressureGrams: 0,
     }));
+    // Send live hardware tare command through BLE bridge to Smart Pen
+    get().sendCommand('CMD:TARE');
   },
 
   setFsrReferenceGrip: (refAdc?: number, targetGrams = 250) => {
@@ -369,12 +371,14 @@ export const useBleStore = create<BleState>((set, get) => ({
       const targetMinG = minGrams ?? activeProfile.minSafePinchGrams;
       const targetMaxG = maxGrams ?? activeProfile.maxSafePinchGrams;
 
-      const minAdc = convertGramsToFsrAdc(targetMinG, fsrCalibration);
-      const maxAdc = convertGramsToFsrAdc(targetMaxG, fsrCalibration);
+      // Send direct grams protocol to Pen firmware
+      const cmdGrams = `CMD:GRAMS:${targetMinG},${targetMaxG}`;
+      await sendCommand(cmdGrams);
 
-      const cmd = `CMD:THRESH:${minAdc},${maxAdc}`;
-      await sendCommand(cmd);
-      console.log(`[BLE] Synced personalized thresholds to pen: ${cmd} (${targetMinG}g - ${targetMaxG}g)`);
+      // Also send THRESH protocol in grams for backward compatibility
+      const cmdThresh = `CMD:THRESH:${targetMinG},${targetMaxG}`;
+      await sendCommand(cmdThresh);
+      console.log(`[BLE] Synced personalized thresholds to pen: ${cmdGrams} (${targetMinG}g - ${targetMaxG}g)`);
       return true;
     } catch (err) {
       console.warn('[BLE] Could not sync thresholds to pen:', err);
